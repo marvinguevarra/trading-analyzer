@@ -1,0 +1,16 @@
+# API Keys Configuration
+# Copy this file to api_keys.yaml and fill in your keys.
+# NEVER commit api_keys.yaml to version control.
+
+anthropic:
+  api_key: "sk-ant-your-key-here"
+
+# Optional data source API keys
+alpha_vantage:
+  api_key: ""
+
+polygon:
+  api_key: ""
+
+news_api:
+  api_key: ""

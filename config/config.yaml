@@ -1,0 +1,100 @@
+# Trading Analyzer Configuration
+
+# AI Model Settings
+models:
+  haiku:
+    model_id: "claude-3-5-haiku-20241022"
+    max_tokens: 4096
+    temperature: 0.0
+    cost_per_1k_input: 0.001    # $1 per MTok
+    cost_per_1k_output: 0.005   # $5 per MTok
+  sonnet:
+    model_id: "claude-sonnet-4-5-20250929"
+    max_tokens: 8192
+    temperature: 0.0
+    cost_per_1k_input: 0.003    # $3 per MTok
+    cost_per_1k_output: 0.015   # $15 per MTok
+  opus:
+    model_id: "claude-opus-4-6"
+    max_tokens: 16384
+    temperature: 0.0
+    cost_per_1k_input: 0.015    # $15 per MTok
+    cost_per_1k_output: 0.075   # $75 per MTok
+
+# Analysis Tiers
+tiers:
+  lite:
+    description: "Intraday/scalping - fast screening"
+    models: ["haiku"]
+    cost_estimate: "$0.10-0.30"
+    max_budget: 0.50
+  standard:
+    description: "Daily swings - full analysis"
+    models: ["haiku", "sonnet"]
+    cost_estimate: "$0.80-2.00"
+    max_budget: 3.00
+  premium:
+    description: "Weekly/monthly - deep dive"
+    models: ["haiku", "sonnet", "opus"]
+    cost_estimate: "$3.00-7.00"
+    max_budget: 10.00
+
+# Analysis Settings
+analysis:
+  asset_classes:
+    - equities
+    - options
+    - futures
+    - forex
+    - crypto
+  timeframes:
+    - 1m
+    - 5m
+    - 15m
+    - 1h
+    - 4h
+    - 1d
+    - 1w
+    - 1M
+  # Gap analysis
+  gap:
+    min_gap_pct: 2.0           # Minimum gap size as percentage
+    lookback_bars: 100          # How far back to search
+  # Support/Resistance
+  support_resistance:
+    lookback_bars: 100
+    swing_window: 5             # Bars on each side for swing detection
+    sensitivity: "medium"       # low, medium, high
+    round_number_interval: 10   # Psychological level spacing
+  # Supply/Demand zones
+  supply_demand:
+    min_move_pct: 3.0           # Minimum explosive move percentage
+    consolidation_bars: 5       # Max bars in base zone
+    volume_threshold: 1.5       # Volume multiplier for significance
+  # Evidence scorecard thresholds
+  scorecard:
+    min_supporting_evidence: 3
+    min_contradicting_check: 2
+    required_checklist_items: 5
+
+# Data Sources
+data:
+  cache_dir: "data/cache"
+  reports_dir: "data/reports"
+  samples_dir: "data/samples"
+  cache_ttl_hours: 24
+
+# Output Settings
+output:
+  default_format: "markdown"
+  formats:
+    - markdown
+    - json
+    - html
+  save_reports: true
+
+# Logging
+logging:
+  level: "INFO"
+  file: "trading_analyzer.log"
+  console: true
