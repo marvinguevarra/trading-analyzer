@@ -15,6 +15,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
@@ -238,7 +239,7 @@ async def tiers():
 @app.post("/analyze/full")
 async def analyze_full(
     file: UploadFile = File(...),
-    symbol: str = Query(..., description="Stock ticker symbol (e.g., WHR)"),
+    symbol: Optional[str] = Query(None, description="Stock ticker symbol (e.g., WHR). Auto-detected from filename if omitted."),
     tier: str = Query("standard", description="Analysis tier: lite, standard, premium"),
     format: str = Query("json", description="Output format: json, markdown, html"),
     min_gap_pct: float = Query(2.0, ge=0, le=50, description="Min gap size %"),
@@ -248,6 +249,7 @@ async def analyze_full(
     Runs the complete pipeline: technical analysis + news + SEC filings + Opus synthesis.
     The tier parameter controls analysis depth and cost.
     The format parameter controls the response format (json, markdown, html).
+    Symbol is auto-detected from filename if not provided.
     """
     if not file.filename:
         raise HTTPException(400, "Filename is required")
@@ -261,10 +263,13 @@ async def analyze_full(
     except ValueError as e:
         raise HTTPException(422, f"CSV parse error: {e}")
 
+    # Auto-detect symbol from parsed CSV if not provided
+    effective_symbol = symbol or parsed.symbol
+
     try:
         orchestrator = TradingAnalysisOrchestrator(tier=tier)
         result = orchestrator.analyze_from_parsed(
-            symbol=symbol,
+            symbol=effective_symbol,
             parsed=parsed,
             min_gap_pct=min_gap_pct,
         )
