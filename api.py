@@ -25,6 +25,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from src.parsers.csv_parser import DataQuality, ParsedData, load_csv, _assess_quality
+from src.utils.logger import get_logger
+
+logger = get_logger("api")
 from src.analyzers.gap_analyzer import detect_gaps, summarize_gaps
 from src.analyzers.sr_calculator import calculate_levels, summarize_levels
 from src.analyzers.supply_demand import identify_zones, summarize_zones
@@ -405,12 +408,19 @@ async def analyze_full(
     SEC filings + Opus synthesis. Tier controls depth/cost.
     Results are cached by symbol+tier+date (6h TTL).
     """
+    import time as _time
+    endpoint_start = _time.time()
+
     # ── Ticker mode ──────────────────────────────────────────
     if mode == "ticker":
         clean_ticker = _validate_ticker(ticker)
         timeframe = _validate_timeframe(timeframe)
 
+        t_fetch = _time.time()
         df = fetch_stock_data(clean_ticker, period=timeframe)
+        fetch_elapsed = round(_time.time() - t_fetch, 2)
+        logger.info(f"TIMING yfinance fetch: {fetch_elapsed}s")
+
         if df is None:
             raise HTTPException(
                 400,
@@ -445,7 +455,10 @@ async def analyze_full(
             raise HTTPException(400, "File too large (maximum 10MB)")
 
         try:
+            t_parse = _time.time()
             df = auto_detect_csv(contents)
+            parse_elapsed = round(_time.time() - t_parse, 2)
+            logger.info(f"TIMING csv parse: {parse_elapsed}s")
         except ValueError as e:
             raise HTTPException(
                 422,
@@ -490,11 +503,18 @@ async def analyze_full(
                 raise HTTPException(400, f"Unknown format '{format}'. Choose: json, markdown, html")
 
     try:
+        t_orch = _time.time()
         orchestrator = TradingAnalysisOrchestrator(tier=tier)
         result = orchestrator.analyze_from_parsed(
             symbol=effective_symbol,
             parsed=parsed,
             min_gap_pct=min_gap_pct,
+        )
+        orch_elapsed = round(_time.time() - t_orch, 2)
+        total_elapsed = round(_time.time() - endpoint_start, 2)
+        logger.info(
+            f"TIMING endpoint total: {total_elapsed}s "
+            f"(orchestrator: {orch_elapsed}s)"
         )
 
         # Cache the fresh result

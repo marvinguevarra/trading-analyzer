@@ -175,6 +175,7 @@ class TradingAnalysisOrchestrator:
             Complete analysis dict.
         """
         start_time = time.time()
+        timings: dict[str, float] = {}
 
         logger.info(
             f"Starting {self.tier_name} analysis for {symbol} (pre-parsed)"
@@ -197,18 +198,38 @@ class TradingAnalysisOrchestrator:
             "cost_summary": {},
         }
 
+        t = time.time()
         self._step_technical_analysis(parsed, min_gap_pct, result)
+        timings["technical_s"] = round(time.time() - t, 2)
+        logger.info(f"TIMING technical: {timings['technical_s']}s")
 
         if self._news_agent:
+            t = time.time()
             self._step_news_analysis(symbol, news_lookback_days, result)
+            timings["news_s"] = round(time.time() - t, 2)
+            logger.info(f"TIMING news: {timings['news_s']}s")
 
         if self._fundamental_agent:
+            t = time.time()
             self._step_fundamental_analysis(symbol, result)
+            timings["fundamental_s"] = round(time.time() - t, 2)
+            logger.info(f"TIMING fundamental: {timings['fundamental_s']}s")
 
         if self._synthesis_agent:
+            t = time.time()
             self._step_synthesis(symbol, result)
+            timings["synthesis_s"] = round(time.time() - t, 2)
+            logger.info(f"TIMING synthesis: {timings['synthesis_s']}s")
 
         result["cost_summary"] = self._build_cost_summary(start_time)
+        result["cost_summary"]["timings"] = timings
+
+        total = round(time.time() - start_time, 2)
+        logger.info(
+            f"TIMING TOTAL for {symbol} ({self.tier_name}): {total}s | "
+            f"breakdown: {timings}"
+        )
+
         return result
 
     # ── Pipeline steps ────────────────────────────────────────
