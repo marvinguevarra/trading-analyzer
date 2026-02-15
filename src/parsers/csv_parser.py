@@ -192,7 +192,10 @@ def _validate_required_columns(df: pd.DataFrame) -> None:
 def _parse_datetime(df: pd.DataFrame) -> pd.DataFrame:
     """Parse the time column into datetime."""
     df = df.copy()
-    df["time"] = pd.to_datetime(df["time"])
+    if df["time"].dtype in ("int64", "int32"):
+        df["time"] = pd.to_datetime(df["time"], unit="s")
+    else:
+        df["time"] = pd.to_datetime(df["time"])
     return df
 
 
