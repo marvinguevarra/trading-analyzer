@@ -234,10 +234,9 @@ class TestNewsAgent:
         agent.analyze("WHR")
 
         call_kwargs = agent.client.messages.create.call_args[1]
-        assert any(
-            t.get("type") == "web_search_20250305"
-            for t in call_kwargs["tools"]
-        )
+        tools = call_kwargs["tools"]
+        assert any(t.get("type") == "web_search_20250305" for t in tools)
+        assert any(t.get("name") == "web_search" for t in tools)
 
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"})
     def test_symbol_in_prompt(self):

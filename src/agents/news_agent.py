@@ -108,7 +108,7 @@ class NewsAgent:
                 model=self.model,
                 max_tokens=2048,
                 system=NEWS_SYSTEM_PROMPT,
-                tools=[{"type": "web_search_20250305"}],
+                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
                 messages=[{"role": "user", "content": prompt}],
             )
         except Exception as e:
