@@ -1,32 +1,24 @@
 # Multi-Asset Trading Analysis System
-## AI-Powered Technical & Fundamental Analysis with Interactive Debate Mode
+## AI-Powered Technical & Fundamental Analysis
 
-**Status:** In Development  
-**Version:** 0.1.0  
+**Status:** MVP Complete
+**Version:** 0.1.0
 **Last Updated:** February 14, 2026
 
 ---
 
-## 🎯 What Is This?
+## What Is This?
 
-A sophisticated trading analysis system that combines:
-- **Technical Analysis** (gaps, S/R, supply/demand zones)
-- **Fundamental Analysis** (SEC filings, earnings, news, social sentiment)
+A trading analysis system that combines:
+- **Technical Analysis** (gaps, S/R levels, supply/demand zones)
+- **Fundamental Analysis** (SEC filings via EDGAR)
+- **News & Sentiment** (RSS feeds + Haiku summarization)
 - **Multi-Model AI Orchestration** (Haiku, Sonnet, Opus working together)
-- **Interactive Debate Mode** (discuss and challenge your ideas with Claude)
-
-### The Game-Changer: Interactive Sparring
-
-Unlike traditional tools that just give you a report, this system becomes your **trading debate partner**:
-- Challenges your assumptions
-- Plays devil's advocate on trade ideas
-- Explores "what if" scenarios
-- Helps you find blind spots
-- Tests your conviction before you risk capital
+- **Evidence Scorecard Method** (no fake percentages)
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # Install dependencies
@@ -36,134 +28,117 @@ pip install -r requirements.txt
 cp config/api_keys.yaml.example config/api_keys.yaml
 # Edit api_keys.yaml with your Anthropic API key
 
-# Run analysis
-python main.py --symbol WHR --csv data/NYSE_WHR__1M.csv --tier standard
+# Run analysis (CLI)
+python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --tier standard
 
-# Get interactive report
-# Upload the generated markdown to Claude.ai and start discussing!
+# Output formats
+python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --format markdown
+python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --format html -o report.html
+python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --format json -o report.json
+
+# Lite tier (fast, cheap — Haiku only)
+python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --tier lite
+```
+
+### API Server
+
+```bash
+# Start the FastAPI server
+uvicorn api:app --reload
+
+# Endpoints:
+# GET  /health           - Health check
+# GET  /tiers            - List analysis tiers
+# POST /analyze          - Technical analysis (CSV upload)
+# POST /analyze/full     - Full AI analysis (CSV + symbol + tier + format)
+# POST /analyze/gaps     - Gap analysis only
+# POST /analyze/levels   - S/R levels only
+# POST /analyze/zones    - Supply/demand zones only
 ```
 
 ---
 
-## 💰 Cost Structure
+## Analysis Tiers
 
-### Analysis Tiers
-
-| Tier | Use Case | Cost/Security | Speed |
-|------|----------|---------------|-------|
-| **Lite** | Intraday/scalping | $0.10-0.30 | <10s |
-| **Standard** | Daily swings | $0.80-2.00 | 30-60s |
-| **Premium** | Weekly/monthly | $3.00-7.00 | 2-5min |
-| **Real-Time** | Active trading | $0.20/signal | <5s |
+| Tier | Models | Includes | Max Cost |
+|------|--------|----------|----------|
+| **Lite** | Haiku | Technical + News | $0.50 |
+| **Standard** | Haiku + Sonnet + Opus | Technical + News + SEC + Synthesis | $3.00 |
+| **Premium** | All + Extended Thinking | Same as Standard with deeper analysis | $7.00 |
 
 ---
 
-## 💬 Interactive Discussion Mode - THE KILLER FEATURE
+## Output Formats
 
-After analysis, upload the report to Claude.ai and have a real conversation:
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| **Markdown** | Clean text report | Upload to Claude.ai for discussion |
+| **JSON** | Structured data | API integration, further processing |
+| **HTML** | Standalone dashboard | Browser viewing, dark/light themes |
+
+See `data/reports/` for example outputs.
+
+---
+
+## Architecture
 
 ```
-User: "I think this is a buy at $88"
+CSV File → Parser → Technical Analysis (free)
+                  → News Agent (Haiku — fast & cheap)
+                  → SEC Agent (Sonnet — balanced)
+                  → Synthesis Agent (Opus — deep reasoning)
+                  → Report Generator (Markdown/JSON/HTML)
+```
 
-Claude: "Let me challenge that. You're buying BELOW the 200 SMA. 
-Historically <40% win rate. Would you wait for confirmation?
+### Project Structure
 
-Also, bull case is only 45% probable. How does this affect sizing?"
+```
+src/
+├── parsers/         CSV parsing and validation
+├── analyzers/       Gap detection, S/R levels, supply/demand zones
+├── agents/          AI model wrappers + specialized agents
+│   ├── model_wrappers.py   Haiku/Sonnet/Opus API wrappers
+│   ├── news_agent.py       Haiku-powered news analysis
+│   ├── fundamental_agent.py Sonnet-powered SEC filing analysis
+│   └── synthesis_agent.py  Opus-powered bull/bear synthesis
+├── outputs/         Report generators (Markdown, JSON, HTML)
+├── utils/           Cost tracking, config, logging, SEC fetcher
+├── orchestrator.py  Pipeline coordinator
+└── main.py          CLI entry point
 
-User: "What if Fed cuts rates?"
-
-Claude: "Great scenario test. Two outcomes:
-- Soft landing: Bull case → 65%, target $130
-- Recession: Bear case → 55%, target $60
-
-You need TWO playbooks. Want me to build specific rules for each?"
+tests/               266 unit tests + 7 integration tests
+api.py               FastAPI backend
 ```
 
 ---
 
-## 🏗️ Architecture
+## Testing
 
-### Multi-Model Orchestration
+```bash
+# Run all unit tests
+python -m pytest tests/ -v
 
+# Run with coverage
+python -m pytest tests/ --cov=src
+
+# Run real API integration tests (costs money!)
+python -m pytest tests/test_integration_real.py -v -m integration
 ```
-Python → Technical Analysis (free)
-Haiku → News & Sentiment (fast & cheap)
-Sonnet → SEC Filings & Earnings (balanced)
-Opus → Final Synthesis & Debate (deep reasoning)
-```
-
-**See PRD.md for full architecture details.**
 
 ---
 
-## 📊 Example: WHR Monthly Analysis
+## Cost Structure
 
-**Cost:** ~$3.00  
-**Time:** 2-3 minutes
+Typical analysis costs:
+- **Lite:** ~$0.001 (Haiku only)
+- **Standard:** ~$0.16 (Haiku + Sonnet + Opus)
+- **Premium:** ~$0.23 (with extended thinking)
 
-**Technical (Python - $0):**
-- Gap: $115.45 → $97.03 (78% fill probability)
-- Support: $71.63, $77.35, $80.00
-- Resistance: $94.82, $100.00, $115.45
-
-**Fundamental (Sonnet - $1.20):**
-- Q4 earnings beat but guidance lowered
-- Margin pressure from tariffs
-- Mixed news sentiment
-
-**Synthesis (Opus - $1.50):**
-- Bull case: 45% → Target $112-115
-- Bear case: 35% → Target $71-72
-- Recommendation: WAIT for $82.84 reclaim
+All well within tier budgets. Cost tracking is built into every API call.
 
 ---
 
-## 📈 Roadmap
-
-### Phase 1: MVP (4 weeks)
-- Core technical analysis
-- CSV parser
-- News aggregator (Haiku)
-- Basic synthesis (Sonnet)
-- Interactive chat format
-
-### Phase 2: Enhanced (6 weeks)
-- SEC filing parser
-- Earnings analyzer
-- Social sentiment
-- Deep synthesis (Opus)
-- HTML dashboards
-
-### Phase 3: Advanced (8 weeks)
-- Real-time mode
-- Batch analysis
-- Options analysis
-- Crypto metrics
-- Backtesting
-
----
-
-## 💡 Philosophy: Why Multi-Model?
-
-**Right tool for the right job:**
-- Haiku = Speed & volume (news, social)
-- Sonnet = Quality & structure (SEC, earnings)
-- Opus = Critical thinking (synthesis, debate)
-
-**Result:** Optimal cost/quality vs. using one model for everything
-
----
-
-## 🎯 Supported Asset Classes
-
-- ✅ US Stocks
-- ✅ Crypto
-- ✅ Futures/Commodities
-- ✅ Options
-
----
-
-## ⚠️ Disclaimers
+## Disclaimers
 
 - Not financial advice
 - Educational purposes only
@@ -173,12 +148,4 @@ Opus → Final Synthesis & Debate (deep reasoning)
 
 ---
 
-## 📚 Documentation
-
-- **PRD.md** - Complete product requirements
-- **docs/** - Detailed documentation
-- **examples/** - Sample reports
-
----
-
-**Built with Claude Sonnet 4.5**
+**Built with Claude**

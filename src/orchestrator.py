@@ -379,6 +379,50 @@ class TradingAnalysisOrchestrator:
         }
 
 
+    def generate_report(
+        self,
+        result: dict,
+        format: str = "markdown",
+        output_path: Optional[str] = None,
+    ) -> str:
+        """Generate a formatted report from analysis results.
+
+        Args:
+            result: Complete analysis result dict from analyze().
+            format: Output format — "markdown", "json", or "html".
+            output_path: Optional file path to save the report.
+
+        Returns:
+            Report content as a string.
+
+        Raises:
+            ValueError: If format is not recognized.
+        """
+        format_lower = format.lower()
+
+        if format_lower == "markdown":
+            from src.outputs.markdown_generator import generate_markdown
+            content = generate_markdown(result)
+        elif format_lower == "json":
+            from src.outputs.json_generator import generate_json
+            content = generate_json(result)
+        elif format_lower == "html":
+            from src.outputs.html_generator import generate_html
+            content = generate_html(result)
+        else:
+            raise ValueError(
+                f"Unknown format '{format}'. Choose from: markdown, json, html"
+            )
+
+        if output_path:
+            path = Path(output_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            logger.info(f"Report saved to {output_path}")
+
+        return content
+
+
 def _sanitize_numpy(obj):
     """Recursively convert numpy types to native Python for JSON serialization."""
     try:

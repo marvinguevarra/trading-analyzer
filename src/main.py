@@ -1,84 +1,167 @@
-"""Trading Analyzer - CLI entry point.
+"""CLI entry point for the Trading Analyzer.
 
-Multi-asset trading analysis with AI orchestration using Claude models.
-Uses Evidence Scorecard + Checklist Method for thesis validation.
+Usage:
+    python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv
+    python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --tier standard --format html
+    python -m src.main --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --output data/reports/WHR_report.md
+
+Options:
+    --symbol        Stock ticker symbol (required)
+    --csv           Path to TradingView CSV file (required)
+    --tier          Analysis tier: lite, standard, premium (default: standard)
+    --format        Output format: markdown, json, html (default: markdown)
+    --output        Save report to file (optional)
+    --min-gap-pct   Minimum gap size percentage (default: 2.0)
+    --news-days     Days to look back for news (default: 7)
+    --budget        Budget override in USD (optional)
+    --quiet         Suppress progress output
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from src.orchestrator import Orchestrator
+from src.orchestrator import TradingAnalysisOrchestrator
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments.
+
+    Returns:
+        Parsed argument namespace.
+    """
     parser = argparse.ArgumentParser(
-        description="Trading Analyzer - AI-powered multi-asset trading analysis",
+        prog="trading-analyzer",
+        description="Multi-asset trading analysis with AI-powered insights.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s analyze AAPL --timeframe 1d
-  %(prog)s analyze BTCUSD --asset-class crypto
-  %(prog)s analyze EURUSD --asset-class forex --output json
+  %(prog)s --symbol WHR --csv data/samples/NYSE_WHR__1M.csv
+  %(prog)s --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --tier lite
+  %(prog)s --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --format html -o report.html
+  %(prog)s --symbol WHR --csv data/samples/NYSE_WHR__1M.csv --tier standard --format json
         """,
     )
-
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    # Analyze command
-    analyze_parser = subparsers.add_parser("analyze", help="Analyze a trading instrument")
-    analyze_parser.add_argument("symbol", type=str, help="Ticker symbol to analyze")
-    analyze_parser.add_argument(
-        "--asset-class",
-        choices=["equities", "options", "futures", "forex", "crypto"],
-        default="equities",
-        help="Asset class (default: equities)",
+    parser.add_argument(
+        "--symbol", required=True, help="Stock ticker symbol (e.g., WHR)"
     )
-    analyze_parser.add_argument(
-        "--timeframe",
-        choices=["1d", "4h", "1h", "15m"],
-        default="1d",
-        help="Analysis timeframe (default: 1d)",
+    parser.add_argument(
+        "--csv", required=True, help="Path to TradingView CSV file"
     )
-    analyze_parser.add_argument(
-        "--thesis",
-        type=str,
-        default=None,
-        help="Trading thesis to validate (e.g., 'bullish breakout above 150')",
+    parser.add_argument(
+        "--tier",
+        default="standard",
+        choices=["lite", "standard", "premium"],
+        help="Analysis tier (default: standard)",
     )
-    analyze_parser.add_argument(
-        "--output",
-        choices=["markdown", "json", "html"],
+    parser.add_argument(
+        "--format",
         default="markdown",
+        choices=["markdown", "json", "html"],
         help="Output format (default: markdown)",
     )
-    analyze_parser.add_argument(
-        "--config",
-        type=str,
-        default="config/config.yaml",
-        help="Path to config file",
+    parser.add_argument(
+        "--output", "-o", default=None, help="Save report to file path"
+    )
+    parser.add_argument(
+        "--min-gap-pct",
+        type=float,
+        default=2.0,
+        help="Minimum gap size %% (default: 2.0)",
+    )
+    parser.add_argument(
+        "--news-days",
+        type=int,
+        default=7,
+        help="Days to look back for news (default: 7)",
+    )
+    parser.add_argument(
+        "--budget", type=float, default=None, help="Budget override in USD"
+    )
+    parser.add_argument(
+        "--quiet", "-q", action="store_true", help="Suppress progress output"
     )
 
     return parser.parse_args()
 
 
 def main() -> int:
+    """Run the CLI analysis pipeline.
+
+    Returns:
+        Exit code (0 = success, 1 = error).
+    """
     args = parse_args()
 
-    if not args.command:
-        print("Error: No command specified. Use --help for usage information.")
+    # Validate CSV exists
+    csv_path = Path(args.csv)
+    if not csv_path.exists():
+        print(f"Error: CSV file not found: {args.csv}", file=sys.stderr)
         return 1
 
-    if args.command == "analyze":
-        orchestrator = Orchestrator(config_path=args.config)
-        result = orchestrator.run(
-            symbol=args.symbol,
-            asset_class=args.asset_class,
-            timeframe=args.timeframe,
-            thesis=args.thesis,
-            output_format=args.output,
+    if not args.quiet:
+        print(f"Trading Analyzer")
+        print(f"  Symbol: {args.symbol}")
+        print(f"  CSV:    {args.csv}")
+        print(f"  Tier:   {args.tier}")
+        print(f"  Format: {args.format}")
+        print()
+
+    try:
+        orchestrator = TradingAnalysisOrchestrator(
+            tier=args.tier,
+            budget=args.budget,
         )
-        print(result)
+
+        if not args.quiet:
+            print("Running analysis pipeline...")
+
+        result = orchestrator.analyze(
+            symbol=args.symbol,
+            csv_file=str(csv_path),
+            min_gap_pct=args.min_gap_pct,
+            news_lookback_days=args.news_days,
+        )
+
+        report = orchestrator.generate_report(
+            result=result,
+            format=args.format,
+            output_path=args.output,
+        )
+
+        if args.output:
+            if not args.quiet:
+                print(f"\nReport saved to: {args.output}")
+        else:
+            print(report)
+
+        # Print cost summary
+        if not args.quiet:
+            cs = result.get("cost_summary", {})
+            total = cs.get("total_cost", 0)
+            budget = cs.get("budget", 0)
+            calls = cs.get("total_calls", 0)
+            time_ms = cs.get("execution_time_ms", 0)
+            errors = result.get("errors", [])
+
+            print(f"\n--- Cost Summary ---")
+            print(f"  Total: ${total:.4f} / ${budget:.2f} budget")
+            print(f"  Calls: {calls}")
+            print(f"  Time:  {time_ms}ms")
+            if errors:
+                print(f"  Warnings: {len(errors)}")
+                for e in errors:
+                    print(f"    - {e}")
+
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nAborted.", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 1
 
     return 0
 

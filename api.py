@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from src.parsers.csv_parser import ParsedData, load_csv
 from src.analyzers.gap_analyzer import detect_gaps, summarize_gaps
@@ -240,12 +240,14 @@ async def analyze_full(
     file: UploadFile = File(...),
     symbol: str = Query(..., description="Stock ticker symbol (e.g., WHR)"),
     tier: str = Query("standard", description="Analysis tier: lite, standard, premium"),
+    format: str = Query("json", description="Output format: json, markdown, html"),
     min_gap_pct: float = Query(2.0, ge=0, le=50, description="Min gap size %"),
 ):
     """Upload a TradingView CSV and run full AI-powered analysis.
 
     Runs the complete pipeline: technical analysis + news + SEC filings + Opus synthesis.
     The tier parameter controls analysis depth and cost.
+    The format parameter controls the response format (json, markdown, html).
     """
     if not file.filename:
         raise HTTPException(400, "Filename is required")
@@ -266,7 +268,19 @@ async def analyze_full(
             parsed=parsed,
             min_gap_pct=min_gap_pct,
         )
-        return _sanitize(result)
+
+        fmt = format.lower()
+        if fmt == "json":
+            return _sanitize(result)
+        elif fmt == "markdown":
+            report = orchestrator.generate_report(result, format="markdown")
+            return PlainTextResponse(content=report, media_type="text/markdown")
+        elif fmt == "html":
+            report = orchestrator.generate_report(result, format="html")
+            return HTMLResponse(content=report)
+        else:
+            raise HTTPException(400, f"Unknown format '{format}'. Choose: json, markdown, html")
+
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:

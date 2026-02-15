@@ -16,7 +16,7 @@
 | 4 | News & Sentiment | ✅ Complete | Feb 14 | ~2h | Model wrappers, cost tracker enhancement |
 | 5 | Fundamental Analysis | ✅ Complete | Feb 14 | ~1.5h | News agent, SEC fetcher, fundamental agent |
 | 6 | Synthesis & Orchestration | ✅ Complete | Feb 14 | ~1.5h | Opus synthesis, orchestrator, tier system |
-| 7 | Output & Testing | ⬜ Not Started | - | - | Reports, E2E tests |
+| 7 | Output & Testing | ✅ Complete | Feb 14 | ~1.5h | Markdown/JSON/HTML generators, CLI, API format param |
 
 **Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ❌ Blocked
 
