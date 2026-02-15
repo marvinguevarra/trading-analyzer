@@ -7,11 +7,13 @@ User-Agent header.
 SEC EDGAR API docs: https://www.sec.gov/edgar/sec-api-documentation
 """
 
+import gzip
 import json
 import time
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Optional
 
 from src.utils.logger import get_logger
@@ -88,7 +90,11 @@ def _sec_request(url: str, max_retries: int = 3) -> bytes:
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as response:
-                return response.read()
+                raw = response.read()
+                # Decompress gzip if server sent compressed response
+                if raw[:2] == b"\x1f\x8b":
+                    raw = gzip.GzipFile(fileobj=BytesIO(raw)).read()
+                return raw
         except urllib.error.HTTPError as e:
             last_error = e
             if e.code == 429:
