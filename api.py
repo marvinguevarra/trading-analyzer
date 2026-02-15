@@ -28,7 +28,7 @@ from src.analyzers.sr_calculator import calculate_levels, summarize_levels
 from src.analyzers.supply_demand import identify_zones, summarize_zones
 from src.orchestrator import TradingAnalysisOrchestrator
 from src.utils.cache import AnalysisCache
-from src.utils.tier_config import list_tiers
+from src.utils.tier_config import list_tiers, list_tiers_detailed
 
 app = FastAPI(
     title="Trading Analyzer API",
@@ -128,6 +128,7 @@ async def root():
         "endpoints": [
             "GET  /health",
             "GET  /tiers",
+            "GET  /config/tiers",
             "POST /analyze",
             "POST /analyze/full",
             "POST /analyze/gaps",
@@ -305,6 +306,16 @@ async def analyze_zones(
 async def tiers():
     """List available analysis tiers with descriptions and cost limits."""
     return {"tiers": list_tiers()}
+
+
+@app.get("/config/tiers")
+async def config_tiers():
+    """Full tier configuration for frontend consumption.
+
+    Single source of truth — frontend fetches this on load to populate
+    tier selectors, pricing cards, and feature comparisons.
+    """
+    return {"tiers": list_tiers_detailed()}
 
 
 @app.post("/analyze/full")

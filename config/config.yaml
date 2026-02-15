@@ -21,23 +21,34 @@ models:
     cost_per_1k_input: 0.015    # $15 per MTok
     cost_per_1k_output: 0.075   # $75 per MTok
 
-# Analysis Tiers
+# Analysis Tiers (source of truth is src/utils/tier_config.py)
+# This section is for reference only — the Python module drives the backend.
 tiers:
   lite:
-    description: "Intraday/scalping - fast screening"
+    description: "Technical analysis + AI news sentiment"
+    use_case: "Quick checks, learning the platform"
+    price_display: "~$0.01"
+    cost_range: [0.00, 0.02]
     models: ["haiku"]
-    cost_estimate: "$0.10-0.30"
     max_budget: 0.50
+    speed_estimate: "~5 seconds"
   standard:
-    description: "Daily swings - full analysis"
+    description: "Complete analysis with SEC filings and AI synthesis"
+    use_case: "Swing trades, informed decisions"
+    price_display: "~$0.28"
+    cost_range: [0.15, 0.40]
     models: ["haiku", "sonnet"]
-    cost_estimate: "$0.80-2.00"
     max_budget: 3.00
+    speed_estimate: "~35 seconds"
+    popular: true
   premium:
-    description: "Weekly/monthly - deep dive"
+    description: "Advanced analysis with Opus-powered deep reasoning"
+    use_case: "High-stakes trades, large positions"
+    price_display: "~$0.45"
+    cost_range: [0.30, 0.60]
     models: ["haiku", "sonnet", "opus"]
-    cost_estimate: "$3.00-7.00"
-    max_budget: 10.00
+    max_budget: 7.00
+    speed_estimate: "~45 seconds"
 
 # Analysis Settings
 analysis:
