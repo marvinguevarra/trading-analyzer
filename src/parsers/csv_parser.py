@@ -101,9 +101,38 @@ def load_csv(file_path: str, asset_class: str = "equities") -> ParsedData:
         raise FileNotFoundError(f"CSV file not found: {file_path}")
 
     logger.info(f"Loading CSV: {file_path}")
-
-    # Read CSV
     df = pd.read_csv(path)
+    return _parse_dataframe(df, path.stem)
+
+
+def parse_csv_content(content: bytes, filename: str = "upload.csv") -> ParsedData:
+    """Parse CSV content from in-memory bytes.
+
+    Behaves identically to load_csv but reads from bytes instead of
+    a file path. Useful for uploaded files.
+
+    Args:
+        content: Raw CSV bytes.
+        filename: Original filename (used for symbol extraction).
+
+    Returns:
+        ParsedData with normalized DataFrame and metadata.
+
+    Raises:
+        ValueError: If required columns are missing or data is invalid.
+    """
+    import io
+
+    logger.info(f"Parsing CSV content: {filename} ({len(content):,} bytes)")
+    df = pd.read_csv(io.BytesIO(content))
+    return _parse_dataframe(df, Path(filename).stem)
+
+
+def _parse_dataframe(df: pd.DataFrame, filename_stem: str) -> ParsedData:
+    """Normalize, validate, and wrap a raw DataFrame into ParsedData.
+
+    Shared implementation used by both load_csv and parse_csv_content.
+    """
     logger.info(f"Raw data: {len(df)} rows, {len(df.columns)} columns")
 
     # Normalize columns
@@ -119,7 +148,7 @@ def load_csv(file_path: str, asset_class: str = "equities") -> ParsedData:
     df = df.sort_values("time").reset_index(drop=True)
 
     # Extract metadata from filename
-    symbol = _extract_symbol(path.stem)
+    symbol = _extract_symbol(filename_stem)
 
     # Detect timeframe
     timeframe = _detect_timeframe(df)

@@ -4,7 +4,7 @@ Endpoints:
   GET  /health              - Health check
   GET  /                    - API info
   POST /analyze             - Full technical analysis (CSV upload)
-  POST /analyze/full        - Complete AI-powered analysis (CSV + AI agents)
+  POST /analyze/full        - Complete AI-powered analysis (ticker OR CSV + AI agents)
   POST /analyze/gaps        - Gap analysis only
   POST /analyze/levels      - Support/Resistance only
   POST /analyze/zones       - Supply/Demand zones only
@@ -13,21 +13,25 @@ Endpoints:
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+import pandas as pd
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
-from src.parsers.csv_parser import ParsedData, load_csv
+from src.parsers.csv_parser import DataQuality, ParsedData, load_csv, _assess_quality
 from src.analyzers.gap_analyzer import detect_gaps, summarize_gaps
 from src.analyzers.sr_calculator import calculate_levels, summarize_levels
 from src.analyzers.supply_demand import identify_zones, summarize_zones
 from src.orchestrator import TradingAnalysisOrchestrator
 from src.utils.cache import AnalysisCache
+from src.utils.csv_parser import auto_detect_csv
+from src.utils.stock_fetcher import fetch_stock_data
 from src.utils.tier_config import list_tiers, list_tiers_detailed
 
 app = FastAPI(
@@ -82,6 +86,64 @@ def _parse_upload(file_bytes: bytes, filename: str) -> ParsedData:
         os.unlink(tmp_path)
 
 
+# ── Validation helpers ───────────────────────────────────────
+
+VALID_TIMEFRAMES = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"]
+
+
+def _validate_ticker(ticker: Optional[str]) -> str:
+    """Validate and normalize a ticker symbol. Returns uppercased ticker."""
+    if not ticker or not ticker.strip():
+        raise HTTPException(400, "Ticker is required for ticker mode")
+    ticker = ticker.strip().upper()
+    if len(ticker) < 1 or len(ticker) > 5:
+        raise HTTPException(400, "Ticker must be 1-5 characters")
+    if not ticker.isalpha():
+        raise HTTPException(400, "Ticker must contain only letters")
+    return ticker
+
+
+def _validate_timeframe(timeframe: str) -> str:
+    """Validate timeframe string."""
+    if timeframe not in VALID_TIMEFRAMES:
+        raise HTTPException(
+            400,
+            f"Invalid timeframe '{timeframe}'. "
+            f"Use: {', '.join(VALID_TIMEFRAMES)}",
+        )
+    return timeframe
+
+
+def _df_to_parsed(
+    df: pd.DataFrame, symbol: str, timeframe: str = "unknown"
+) -> ParsedData:
+    """Convert a plain DataFrame (date column) to ParsedData (time column).
+
+    Bridges the auto_detect_csv / fetch_stock_data output format into the
+    ParsedData format expected by the orchestrator and analyzers.
+    """
+    df = df.copy()
+
+    # Rename 'date' → 'time' for analyzer compatibility
+    if "date" in df.columns and "time" not in df.columns:
+        df = df.rename(columns={"date": "time"})
+
+    quality = _assess_quality(df)
+    date_range = (
+        df["time"].iloc[0].strftime("%Y-%m-%d"),
+        df["time"].iloc[-1].strftime("%Y-%m-%d"),
+    )
+
+    return ParsedData(
+        df=df,
+        symbol=symbol,
+        timeframe=timeframe,
+        date_range=date_range,
+        quality=quality,
+        indicators=[],
+    )
+
+
 def _metadata(parsed: ParsedData) -> dict:
     """Extract serializable metadata from ParsedData."""
     return {
@@ -129,8 +191,8 @@ async def root():
             "GET  /health",
             "GET  /tiers",
             "GET  /config/tiers",
-            "POST /analyze",
-            "POST /analyze/full",
+            "POST /analyze              - Technical analysis (CSV upload)",
+            "POST /analyze/full         - Full AI analysis (mode=ticker or mode=csv)",
             "POST /analyze/gaps",
             "POST /analyze/levels",
             "POST /analyze/zones",
@@ -320,35 +382,94 @@ async def config_tiers():
 
 @app.post("/analyze/full")
 async def analyze_full(
-    file: UploadFile = File(...),
-    symbol: Optional[str] = Query(None, description="Stock ticker symbol (e.g., WHR). Auto-detected from filename if omitted."),
-    tier: str = Query("standard", description="Analysis tier: lite, standard, premium"),
-    format: str = Query("json", description="Output format: json, markdown, html"),
-    min_gap_pct: float = Query(2.0, ge=0, le=50, description="Min gap size %"),
-    force_fresh: bool = Query(False, description="Bypass cache and run fresh analysis"),
+    mode: str = Form("csv"),
+    ticker: Optional[str] = Form(None),
+    timeframe: str = Form("1mo"),
+    file: Optional[UploadFile] = File(None),
+    symbol: Optional[str] = Form(None),
+    tier: str = Form("standard"),
+    format: str = Form("json"),
+    min_gap_pct: float = Form(2.0),
+    force_fresh: bool = Form(False),
 ):
-    """Upload a TradingView CSV and run full AI-powered analysis.
+    """Run full AI-powered analysis in two modes.
 
-    Runs the complete pipeline: technical analysis + news + SEC filings + Opus synthesis.
-    The tier parameter controls analysis depth and cost.
-    The format parameter controls the response format (json, markdown, html).
-    Symbol is auto-detected from filename if not provided.
-    Results are cached by symbol+tier+date (6h TTL). Use force_fresh=true to bypass.
+    **Mode 1: ticker** — Fetch data via yfinance.
+        Required: ticker (e.g., AAPL). Optional: timeframe (default 1mo).
+
+    **Mode 2: csv** — Parse an uploaded CSV file.
+        Required: file (CSV upload). Supports TradingView, Yahoo Finance,
+        Think or Swim, and most standard formats.
+
+    Both modes feed the same pipeline: technical analysis + news +
+    SEC filings + Opus synthesis. Tier controls depth/cost.
+    Results are cached by symbol+tier+date (6h TTL).
     """
-    if not file.filename:
-        raise HTTPException(400, "Filename is required")
+    # ── Ticker mode ──────────────────────────────────────────
+    if mode == "ticker":
+        clean_ticker = _validate_ticker(ticker)
+        timeframe = _validate_timeframe(timeframe)
 
-    contents = await file.read()
-    if not contents:
-        raise HTTPException(400, "File is empty")
+        df = fetch_stock_data(clean_ticker, period=timeframe)
+        if df is None:
+            raise HTTPException(
+                400,
+                f"Unable to fetch data for '{clean_ticker}'. "
+                "Please check the ticker symbol and try again.",
+            )
 
-    try:
-        parsed = _parse_upload(contents, file.filename)
-    except ValueError as e:
-        raise HTTPException(422, f"CSV parse error: {e}")
+        if len(df) < 5:
+            raise HTTPException(
+                400,
+                f"Not enough data for '{clean_ticker}' "
+                f"(got {len(df)} rows, need at least 5).",
+            )
 
-    # Auto-detect symbol from parsed CSV if not provided
-    effective_symbol = symbol or parsed.symbol
+        parsed = _df_to_parsed(df, symbol=clean_ticker, timeframe=timeframe)
+        effective_symbol = clean_ticker
+
+    # ── CSV mode ─────────────────────────────────────────────
+    elif mode == "csv":
+        if not file or not file.filename:
+            raise HTTPException(400, "CSV file is required for csv mode")
+
+        if not file.filename.lower().endswith(".csv"):
+            raise HTTPException(400, "Please upload a CSV file (.csv extension)")
+
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(400, "File is empty")
+
+        # 10 MB limit
+        if len(contents) > 10 * 1024 * 1024:
+            raise HTTPException(400, "File too large (maximum 10MB)")
+
+        try:
+            df = auto_detect_csv(contents)
+        except ValueError as e:
+            raise HTTPException(
+                422,
+                f"{e}. Ensure your CSV has Date and Close columns.",
+            )
+
+        if len(df) < 5:
+            raise HTTPException(
+                400,
+                f"Not enough data (got {len(df)} rows, need at least 5).",
+            )
+
+        # Extract ticker from filename or explicit symbol param
+        csv_ticker = (
+            symbol
+            or file.filename.replace(".csv", "").replace(".CSV", "").split("_")[0].upper()
+        )
+        parsed = _df_to_parsed(df, symbol=csv_ticker)
+        effective_symbol = csv_ticker
+
+    else:
+        raise HTTPException(400, f"Invalid mode '{mode}'. Use 'ticker' or 'csv'.")
+
+    # ── Common pipeline (both modes converge here) ───────────
 
     # Check cache (unless force_fresh)
     if not force_fresh:
