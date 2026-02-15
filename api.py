@@ -140,10 +140,21 @@ async def root():
 async def health():
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     key_prefix = os.environ.get("ANTHROPIC_API_KEY", "")[:10] + "..." if has_key else None
+
+    # Test outbound connectivity
+    net_status = "unknown"
+    try:
+        import httpx
+        r = httpx.get("https://api.anthropic.com", timeout=5)
+        net_status = f"reachable (HTTP {r.status_code})"
+    except Exception as e:
+        net_status = f"unreachable: {type(e).__name__}: {e}"
+
     return {
         "status": "ok",
         "anthropic_key_set": has_key,
         "key_prefix": key_prefix,
+        "anthropic_api_reachable": net_status,
     }
 
 
