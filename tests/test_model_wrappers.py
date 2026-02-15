@@ -48,9 +48,9 @@ class TestClassHierarchy:
         assert issubclass(OpusWrapper, BaseModelWrapper)
 
     def test_model_ids(self):
-        assert HaikuWrapper.model_id == "claude-haiku-4-5-20250514"
+        assert HaikuWrapper.model_id == "claude-haiku-4-5-20251001"
         assert SonnetWrapper.model_id == "claude-sonnet-4-5-20250929"
-        assert OpusWrapper.model_id == "claude-opus-4-5-20251101"
+        assert OpusWrapper.model_id == "claude-opus-4-6"
 
     def test_tiers(self):
         assert HaikuWrapper.tier == "haiku"
@@ -123,7 +123,7 @@ class TestCall:
         assert result["text"] == "Test reply"
         assert result["input_tokens"] == 100
         assert result["output_tokens"] == 50
-        assert result["model"] == "claude-haiku-4-5-20250514"
+        assert result["model"] == "claude-haiku-4-5-20251001"
         assert isinstance(result["cost"], float)
         assert result["cost"] > 0
 

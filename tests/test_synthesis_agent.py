@@ -129,7 +129,7 @@ def _mock_opus_response(text=SAMPLE_OPUS_RESPONSE):
         "input_tokens": 3000,
         "output_tokens": 1200,
         "cost": 0.135,
-        "model": "claude-opus-4-5-20251101",
+        "model": "claude-opus-4-6",
     }
 
 

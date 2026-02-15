@@ -13,7 +13,7 @@ import yaml
 DEFAULTS = {
     "models": {
         "haiku": {
-            "model_id": "claude-haiku-4-5-20250514",
+            "model_id": "claude-haiku-4-5-20251001",
             "max_tokens": 4096,
             "temperature": 0.0,
             "cost_per_1k_input": 0.00025,
@@ -27,7 +27,7 @@ DEFAULTS = {
             "cost_per_1k_output": 0.015,
         },
         "opus": {
-            "model_id": "claude-opus-4-5-20251101",
+            "model_id": "claude-opus-4-6",
             "max_tokens": 16384,
             "temperature": 0.0,
             "cost_per_1k_input": 0.015,

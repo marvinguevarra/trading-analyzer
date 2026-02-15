@@ -158,7 +158,7 @@ class HaikuWrapper(BaseModelWrapper):
     """Claude Haiku 4.5 — fast screening, data parsing, simple lookups."""
 
     tier = "haiku"
-    model_id = "claude-haiku-4-5-20250514"
+    model_id = "claude-haiku-4-5-20251001"
     default_max_tokens = 4096
 
     def _tier_label(self) -> str:
@@ -177,10 +177,10 @@ class SonnetWrapper(BaseModelWrapper):
 
 
 class OpusWrapper(BaseModelWrapper):
-    """Claude Opus 4.5 — deep reasoning, thesis validation, synthesis."""
+    """Claude Opus 4.6 — deep reasoning, thesis validation, synthesis."""
 
     tier = "opus"
-    model_id = "claude-opus-4-5-20251101"
+    model_id = "claude-opus-4-6"
     default_max_tokens = 16384
 
     def _tier_label(self) -> str:

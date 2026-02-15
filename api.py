@@ -143,24 +143,64 @@ async def health():
 
     # Test actual Haiku call
     api_test = "skipped"
+    debug_info = {}
     if has_key:
         try:
             import anthropic as anth
+            import httpx
+            import traceback as tb
+            import ssl
+
+            debug_info["anthropic_version"] = anth.__version__
+            debug_info["httpx_version"] = httpx.__version__
+
+            # Check SSL
+            try:
+                ctx = ssl.create_default_context()
+                debug_info["ssl_ok"] = True
+            except Exception as ssl_e:
+                debug_info["ssl_ok"] = False
+                debug_info["ssl_error"] = str(ssl_e)
+
+            # Raw httpx POST test (like the SDK would do)
+            try:
+                raw_resp = httpx.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-haiku-4-5-20251001",
+                        "max_tokens": 8,
+                        "messages": [{"role": "user", "content": "Reply: OK"}],
+                    },
+                    timeout=15.0,
+                )
+                debug_info["raw_httpx_status"] = raw_resp.status_code
+                debug_info["raw_httpx_body"] = raw_resp.text[:300]
+            except Exception as raw_e:
+                debug_info["raw_httpx_error"] = f"{type(raw_e).__name__}: {raw_e}"
+
+            # SDK call
             client = anth.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
             resp = client.messages.create(
-                model="claude-haiku-4-5-20250514",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=8,
                 messages=[{"role": "user", "content": "Reply: OK"}],
             )
             api_test = f"ok: {resp.content[0].text.strip()}"
         except Exception as e:
             api_test = f"{type(e).__name__}: {e}"
+            debug_info["traceback"] = tb.format_exc()[-500:]
 
     return {
         "status": "ok",
         "anthropic_key_set": has_key,
         "key_prefix": key_prefix,
         "api_test": api_test,
+        "debug": debug_info,
     }
 
 

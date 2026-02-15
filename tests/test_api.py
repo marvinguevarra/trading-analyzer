@@ -39,7 +39,9 @@ async def test_root(client):
 async def test_health(client):
     resp = await client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "anthropic_key_set" in data
 
 
 @pytest.mark.asyncio

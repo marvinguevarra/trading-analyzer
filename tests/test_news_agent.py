@@ -82,7 +82,7 @@ def _mock_haiku_response(text=SAMPLE_HAIKU_RESPONSE):
         "input_tokens": 800,
         "output_tokens": 400,
         "cost": 0.0007,
-        "model": "claude-haiku-4-5-20250514",
+        "model": "claude-haiku-4-5-20251001",
     }
 
 
