@@ -138,7 +138,13 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    key_prefix = os.environ.get("ANTHROPIC_API_KEY", "")[:10] + "..." if has_key else None
+    return {
+        "status": "ok",
+        "anthropic_key_set": has_key,
+        "key_prefix": key_prefix,
+    }
 
 
 @app.post("/analyze")
