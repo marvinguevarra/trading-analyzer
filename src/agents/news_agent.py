@@ -1,26 +1,32 @@
-"""News analysis agent powered by Claude Haiku.
+"""News analysis agent powered by Claude with web search.
 
-Fetches recent news for a stock symbol and uses Haiku to summarize headlines,
-extract sentiment, identify catalysts, and surface key themes.
+Uses Claude's built-in web_search tool to find and analyze recent news
+for a stock symbol in a single API call. Claude searches the web,
+reads the articles, and returns structured sentiment analysis.
 
-Cost target: <$0.10 per analysis (Haiku is cheap).
+Cost: ~$0.01-0.03 per analysis (Haiku + web search).
 """
 
 import json
+import os
 from typing import Optional
 
-from src.agents.model_wrappers import HaikuWrapper, get_wrapper
+import anthropic
+
 from src.utils.cost_tracker import CostTracker
 from src.utils.logger import get_logger
-from src.utils.news_fetcher import fetch_recent_news
 
 logger = get_logger("news_agent")
 
-NEWS_SYSTEM_PROMPT = """\
-You are a financial news analyst. You analyze recent news headlines and articles
-about a stock to extract actionable trading insights.
+# Web search costs $10 per 1000 queries = $0.01 per search
+WEB_SEARCH_COST = 0.01
 
-You MUST respond with valid JSON only — no markdown, no explanation, no code fences.
+NEWS_SYSTEM_PROMPT = """\
+You are a financial news analyst. Search for the latest news about
+the given stock symbol, then provide a structured analysis.
+
+You MUST respond with valid JSON only — no markdown, no explanation,
+no code fences.
 
 Your response format:
 {
@@ -31,36 +37,45 @@ Your response format:
   "summary": "<2-3 sentence summary of the overall news sentiment and key takeaways>",
   "headline_analysis": [
     {"headline": "<headline text>", "impact": "<positive|negative|neutral>", "relevance": "<high|medium|low>"}
-  ]
+  ],
+  "key_developments": ["<development 1>", "<development 2>"],
+  "analyst_actions": ["<action 1>", "<action 2>"]
 }
 
 Rules:
 - sentiment_score: Use the full 1-10 scale. 5 = truly neutral.
-- catalysts: Specific upcoming or recent events that could move the stock (earnings, FDA approval, acquisition, etc.)
-- key_themes: Recurring topics across multiple articles (margin pressure, growth, restructuring, etc.)
-- headline_analysis: Analyze the top 5 most relevant headlines only.
-- Be objective. Do not fabricate information not present in the articles.\
+- catalysts: Specific upcoming or recent events that could move the stock.
+- key_themes: Recurring topics across multiple articles.
+- headline_analysis: Analyze the top 5 most relevant headlines.
+- key_developments: Major news from the last 24-48 hours.
+- analyst_actions: Recent analyst upgrades, downgrades, or price target changes.
+- Be objective. Only report facts found in the search results.\
 """
 
 
 class NewsAgent:
-    """Haiku-powered news analysis agent.
+    """News analysis agent using Claude web search.
 
-    Fetches recent news for a symbol and sends headlines to Haiku
-    for sentiment analysis, catalyst identification, and theme extraction.
+    Makes a single API call with the web_search tool. Claude finds
+    recent articles, reads them, and returns structured analysis.
 
     Args:
-        api_key: Anthropic API key. If None, reads from ANTHROPIC_API_KEY env var.
+        api_key: Anthropic API key. If None, reads from env.
         cost_tracker: Optional CostTracker for budget management.
+        model: Model ID to use. Defaults to Haiku for cost efficiency.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         cost_tracker: Optional[CostTracker] = None,
+        model: str = "claude-haiku-4-5-20251001",
     ):
-        self.haiku = get_wrapper("haiku", api_key=api_key, cost_tracker=cost_tracker)
+        resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        resolved_key = resolved_key.strip().replace("\n", "").replace("\r", "")
+        self.client = anthropic.Anthropic(api_key=resolved_key)
         self.cost_tracker = cost_tracker
+        self.model = model
 
     def analyze(
         self,
@@ -68,143 +83,156 @@ class NewsAgent:
         lookback_days: int = 7,
         max_articles: int = 20,
     ) -> dict:
-        """Analyze recent news for a stock symbol.
-
-        Fetches news articles and sends them to Haiku for analysis.
+        """Analyze recent news for a stock symbol using web search.
 
         Args:
             symbol: Stock ticker symbol (e.g., "WHR").
-            lookback_days: Number of days to look back for news.
-            max_articles: Maximum number of articles to fetch.
+            lookback_days: Hint for how far back to search.
+            max_articles: Ignored (kept for API compatibility).
 
         Returns:
-            Dict with keys: headlines, sentiment_score, catalysts,
-            key_themes, summary, cost.
+            Dict with sentiment, catalysts, themes, headlines, cost.
         """
-        logger.info(f"Analyzing news for {symbol} (last {lookback_days} days)")
+        logger.info(f"Analyzing news for {symbol} via web search")
 
-        # Step 1: Fetch news
-        articles = fetch_recent_news(
-            symbol=symbol,
-            days=lookback_days,
-            max_articles=max_articles,
+        prompt = (
+            f"Search for the latest news about {symbol} stock from the "
+            f"past {lookback_days} days. Find recent headlines, analyst "
+            f"actions, earnings updates, and any catalysts. Then analyze "
+            f"the overall sentiment.\n\n"
+            f"Provide your analysis as JSON."
         )
 
-        if not articles:
-            logger.warning(f"No news articles found for {symbol}")
-            return self._empty_result(symbol)
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=2048,
+                system=NEWS_SYSTEM_PROMPT,
+                tools=[{"type": "web_search_20250305"}],
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as e:
+            logger.error(f"Web search failed for {symbol}: {e}")
+            result = self._empty_result(symbol)
+            result["summary"] = f"News fetch failed: {e}"
+            return result
 
-        # Step 2: Build prompt with articles
-        prompt = self._build_prompt(symbol, articles)
+        # Extract text, sources, and usage from response
+        text_parts = []
+        sources = []
+        for block in response.content:
+            if block.type == "text":
+                text_parts.append(block.text)
+            elif block.type == "web_search_tool_result":
+                for item in getattr(block, "content", []):
+                    if getattr(item, "type", "") == "web_search_result":
+                        sources.append({
+                            "title": getattr(item, "title", ""),
+                            "url": getattr(item, "url", ""),
+                        })
 
-        # Step 3: Send to Haiku
-        result = self.haiku.call(
-            prompt=prompt,
-            system=NEWS_SYSTEM_PROMPT,
-            max_tokens=2048,
-            temperature=0.1,
-            component="news_agent",
-        )
+        full_text = "\n".join(text_parts)
 
-        # Step 4: Parse response
-        analysis = self._parse_response(result["text"], articles)
-        analysis["cost"] = result["cost"]
-        analysis["input_tokens"] = result["input_tokens"]
-        analysis["output_tokens"] = result["output_tokens"]
+        # Parse JSON from response
+        analysis = self._parse_json(full_text)
+
+        # Calculate cost
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+        token_cost = self._token_cost(input_tokens, output_tokens)
+        total_cost = token_cost + WEB_SEARCH_COST
+
+        # Record to cost tracker
+        if self.cost_tracker:
+            self.cost_tracker.record(
+                model="haiku",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                component="news_agent",
+                description=f"web_search: {symbol} news",
+            )
+
+        # Build headlines from headline_analysis or key_developments
+        headlines = []
+        for item in analysis.get("headline_analysis", []):
+            headlines.append({
+                "title": item.get("headline", ""),
+                "date": "",
+                "source": "",
+            })
+
+        result = {
+            "symbol": symbol,
+            "headlines": headlines,
+            "sentiment_score": float(analysis.get("sentiment_score", 5.0)),
+            "sentiment_label": analysis.get("sentiment_label", "neutral"),
+            "catalysts": analysis.get("catalysts", []),
+            "key_themes": analysis.get("key_themes", []),
+            "summary": analysis.get("summary", "No analysis available."),
+            "headline_analysis": analysis.get("headline_analysis", []),
+            "key_developments": analysis.get("key_developments", []),
+            "analyst_actions": analysis.get("analyst_actions", []),
+            "sources": sources,
+            "article_count": len(headlines),
+            "provider": "claude_web_search",
+            "cost": round(total_cost, 6),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
 
         logger.info(
             f"News analysis complete for {symbol}: "
-            f"sentiment={analysis['sentiment_score']}, "
-            f"catalysts={len(analysis['catalysts'])}, "
-            f"cost=${result['cost']:.4f}"
+            f"sentiment={result['sentiment_score']}, "
+            f"sources={len(sources)}, "
+            f"cost=${total_cost:.4f}"
         )
 
-        return analysis
+        return result
 
-    def _build_prompt(self, symbol: str, articles: list[dict]) -> str:
-        """Build the analysis prompt from fetched articles.
+    def _parse_json(self, text: str) -> dict:
+        """Extract JSON from Claude's response text."""
+        text = text.strip()
 
-        Args:
-            symbol: Stock ticker symbol.
-            articles: List of article dicts from news_fetcher.
-
-        Returns:
-            Formatted prompt string.
-        """
-        lines = [
-            f"Analyze the following recent news articles about {symbol} stock.",
-            f"There are {len(articles)} articles.\n",
-        ]
-
-        for i, article in enumerate(articles, 1):
-            lines.append(f"--- Article {i} ---")
-            lines.append(f"Title: {article['title']}")
-            if article.get("date"):
-                lines.append(f"Date: {article['date']}")
-            if article.get("source"):
-                lines.append(f"Source: {article['source']}")
-            if article.get("snippet"):
-                lines.append(f"Snippet: {article['snippet'][:300]}")
-            lines.append("")
-
-        lines.append(
-            f"Provide your analysis of the overall news sentiment for {symbol}."
-        )
-        return "\n".join(lines)
-
-    def _parse_response(self, text: str, articles: list[dict]) -> dict:
-        """Parse Haiku's JSON response into structured output.
-
-        Args:
-            text: Raw response text from Haiku.
-            articles: Original articles for headline list.
-
-        Returns:
-            Parsed analysis dict.
-        """
-        # Extract JSON from response (handle potential markdown fences)
-        json_text = text.strip()
-        if json_text.startswith("```"):
-            # Remove code fences
-            lines = json_text.split("\n")
-            json_text = "\n".join(
-                line for line in lines
-                if not line.strip().startswith("```")
-            )
-
+        # Try direct parse
         try:
-            parsed = json.loads(json_text)
+            return json.loads(text)
         except json.JSONDecodeError:
-            logger.warning("Failed to parse Haiku response as JSON, using defaults")
-            parsed = {}
+            pass
 
-        # Build headlines list from original articles
-        headlines = [
-            {"title": a["title"], "date": a.get("date", ""), "source": a.get("source", "")}
-            for a in articles
-        ]
+        # Handle markdown code fences
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                pass
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                pass
 
-        return {
-            "symbol": articles[0].get("title", "").split()[0] if articles else "",
-            "headlines": headlines,
-            "sentiment_score": float(parsed.get("sentiment_score", 5.0)),
-            "sentiment_label": parsed.get("sentiment_label", "neutral"),
-            "catalysts": parsed.get("catalysts", []),
-            "key_themes": parsed.get("key_themes", []),
-            "summary": parsed.get("summary", "No analysis available."),
-            "headline_analysis": parsed.get("headline_analysis", []),
-            "article_count": len(articles),
-        }
+        # Try extracting JSON object
+        if "{" in text and "}" in text:
+            start = text.index("{")
+            end = text.rindex("}") + 1
+            try:
+                return json.loads(text[start:end])
+            except json.JSONDecodeError:
+                pass
+
+        logger.warning("Could not parse JSON from web search response")
+        return {}
+
+    def _token_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Calculate token cost for Haiku."""
+        return (input_tokens / 1_000_000 * 0.25) + (
+            output_tokens / 1_000_000 * 1.25
+        )
 
     def _empty_result(self, symbol: str) -> dict:
-        """Return an empty result when no articles are found.
-
-        Args:
-            symbol: Stock ticker symbol.
-
-        Returns:
-            Empty analysis dict with default values.
-        """
+        """Return empty result when search fails."""
         return {
             "symbol": symbol,
             "headlines": [],
@@ -212,9 +240,13 @@ class NewsAgent:
             "sentiment_label": "neutral",
             "catalysts": [],
             "key_themes": [],
-            "summary": f"No recent news articles found for {symbol}.",
+            "summary": f"No news found for {symbol}.",
             "headline_analysis": [],
+            "key_developments": [],
+            "analyst_actions": [],
+            "sources": [],
             "article_count": 0,
+            "provider": "claude_web_search",
             "cost": 0.0,
             "input_tokens": 0,
             "output_tokens": 0,
