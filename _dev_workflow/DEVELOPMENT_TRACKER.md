@@ -15,7 +15,7 @@
 | 3 | Config & Models | ✅ Complete | Feb 14 | ~1.5h | Wrappers, cost tracking |
 | 4 | News & Sentiment | ✅ Complete | Feb 14 | ~2h | Model wrappers, cost tracker enhancement |
 | 5 | Fundamental Analysis | ✅ Complete | Feb 14 | ~1.5h | News agent, SEC fetcher, fundamental agent |
-| 6 | Synthesis & Orchestration | ⬜ Not Started | - | - | Opus, routing |
+| 6 | Synthesis & Orchestration | ✅ Complete | Feb 14 | ~1.5h | Opus synthesis, orchestrator, tier system |
 | 7 | Output & Testing | ⬜ Not Started | - | - | Reports, E2E tests |
 
 **Legend:** ⬜ Not Started | 🟡 In Progress | ✅ Complete | ❌ Blocked

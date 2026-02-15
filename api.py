@@ -3,7 +3,8 @@
 Endpoints:
   GET  /health              - Health check
   GET  /                    - API info
-  POST /analyze             - Full analysis (CSV upload)
+  POST /analyze             - Full technical analysis (CSV upload)
+  POST /analyze/full        - Complete AI-powered analysis (CSV + AI agents)
   POST /analyze/gaps        - Gap analysis only
   POST /analyze/levels      - Support/Resistance only
   POST /analyze/zones       - Supply/Demand zones only
@@ -24,6 +25,8 @@ from src.parsers.csv_parser import ParsedData, load_csv
 from src.analyzers.gap_analyzer import detect_gaps, summarize_gaps
 from src.analyzers.sr_calculator import calculate_levels, summarize_levels
 from src.analyzers.supply_demand import identify_zones, summarize_zones
+from src.orchestrator import TradingAnalysisOrchestrator
+from src.utils.tier_config import list_tiers
 
 app = FastAPI(
     title="Trading Analyzer API",
@@ -121,7 +124,9 @@ async def root():
         "version": "0.1.0",
         "endpoints": [
             "GET  /health",
+            "GET  /tiers",
             "POST /analyze",
+            "POST /analyze/full",
             "POST /analyze/gaps",
             "POST /analyze/levels",
             "POST /analyze/zones",
@@ -222,6 +227,50 @@ async def analyze_zones(
         "metadata": _metadata(parsed),
         "supply_demand": summarize_zones(zones, current_price),
     })
+
+
+@app.get("/tiers")
+async def tiers():
+    """List available analysis tiers with descriptions and cost limits."""
+    return {"tiers": list_tiers()}
+
+
+@app.post("/analyze/full")
+async def analyze_full(
+    file: UploadFile = File(...),
+    symbol: str = Query(..., description="Stock ticker symbol (e.g., WHR)"),
+    tier: str = Query("standard", description="Analysis tier: lite, standard, premium"),
+    min_gap_pct: float = Query(2.0, ge=0, le=50, description="Min gap size %"),
+):
+    """Upload a TradingView CSV and run full AI-powered analysis.
+
+    Runs the complete pipeline: technical analysis + news + SEC filings + Opus synthesis.
+    The tier parameter controls analysis depth and cost.
+    """
+    if not file.filename:
+        raise HTTPException(400, "Filename is required")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(400, "File is empty")
+
+    try:
+        parsed = _parse_upload(contents, file.filename)
+    except ValueError as e:
+        raise HTTPException(422, f"CSV parse error: {e}")
+
+    try:
+        orchestrator = TradingAnalysisOrchestrator(tier=tier)
+        result = orchestrator.analyze_from_parsed(
+            symbol=symbol,
+            parsed=parsed,
+            min_gap_pct=min_gap_pct,
+        )
+        return _sanitize(result)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Analysis error: {e}")
 
 
 @app.get("/analyze/sample/{filename}")
