@@ -88,9 +88,9 @@ def sample_result_full() -> dict:
             "financial_health": {
                 "overall_grade": "B",
                 "revenue_trend": "stable",
-                "margin_trend": "improving",
+                "profit_margin_trend": "improving",
                 "debt_level": "moderate",
-                "cash_flow": "positive",
+                "cash_position": "strong",
             },
             "key_risks": [
                 "Housing market slowdown",

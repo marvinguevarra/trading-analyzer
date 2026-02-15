@@ -210,12 +210,12 @@ class MarkdownGenerator:
 
         if fh.get("revenue_trend"):
             lines.append(f"- Revenue Trend: {fh['revenue_trend']}")
-        if fh.get("margin_trend"):
-            lines.append(f"- Margin Trend: {fh['margin_trend']}")
+        if fh.get("profit_margin_trend"):
+            lines.append(f"- Profit Margin Trend: {fh['profit_margin_trend']}")
         if fh.get("debt_level"):
             lines.append(f"- Debt Level: {fh['debt_level']}")
-        if fh.get("cash_flow"):
-            lines.append(f"- Cash Flow: {fh['cash_flow']}")
+        if fh.get("cash_position"):
+            lines.append(f"- Cash Position: {fh['cash_position']}")
         lines.append("")
 
         # Key risks

@@ -313,7 +313,7 @@ footer {
 
         # Health metrics table
         metrics_rows = ""
-        for key in ("revenue_trend", "margin_trend", "debt_level", "cash_flow"):
+        for key in ("revenue_trend", "profit_margin_trend", "debt_level", "cash_position"):
             val = fh.get(key)
             if val:
                 label = key.replace("_", " ").title()
