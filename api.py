@@ -138,8 +138,11 @@ async def root():
 
 @app.get("/health")
 async def health():
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    key_prefix = os.environ.get("ANTHROPIC_API_KEY", "")[:10] + "..." if has_key else None
+    raw_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    # Strip whitespace/newlines that can sneak in from env var pasting
+    clean_key = raw_key.strip().replace("\n", "").replace("\r", "")
+    has_key = bool(clean_key)
+    key_prefix = clean_key[:10] + "..." if has_key else None
 
     # Test actual Haiku call
     api_test = "skipped"
@@ -167,7 +170,7 @@ async def health():
                 raw_resp = httpx.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
-                        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                        "x-api-key": clean_key,
                         "anthropic-version": "2023-06-01",
                         "content-type": "application/json",
                     },
@@ -183,8 +186,8 @@ async def health():
             except Exception as raw_e:
                 debug_info["raw_httpx_error"] = f"{type(raw_e).__name__}: {raw_e}"
 
-            # SDK call
-            client = anth.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+            # SDK call (using cleaned key)
+            client = anth.Anthropic(api_key=clean_key)
             resp = client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=8,

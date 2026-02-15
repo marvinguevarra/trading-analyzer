@@ -48,6 +48,8 @@ class BaseModelWrapper(ABC):
                 "No API key provided. Set ANTHROPIC_API_KEY env var "
                 "or pass api_key= to the wrapper."
             )
+        # Strip whitespace/newlines that can sneak in from env var pasting
+        resolved_key = resolved_key.strip().replace("\n", "").replace("\r", "")
         self.client = anthropic.Anthropic(api_key=resolved_key)
         self.cost_tracker = cost_tracker
         self.max_retries = max_retries
