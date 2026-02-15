@@ -244,11 +244,121 @@ def fetch_latest_filings(
     return filings
 
 
+def _strip_html(text: str) -> str:
+    """Strip HTML/iXBRL tags from filing text, returning readable content."""
+    import re
+
+    # Remove iXBRL header section (massive XBRL metadata block that
+    # contains taxonomy refs, context defs, etc. — not readable content)
+    text = re.sub(
+        r"<ix:header[^>]*>.*?</ix:header>", "", text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Remove iXBRL hidden elements (contain XBRL-only data not shown in browser)
+    text = re.sub(
+        r"<ix:hidden[^>]*>.*?</ix:hidden>", "", text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Remove script and style blocks
+    text = re.sub(
+        r"<(script|style)[^>]*>.*?</\1>", "", text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Remove HTML tags (including remaining ix: inline tags, keeping their text content)
+    text = re.sub(r"<[^>]+>", " ", text)
+    # Decode HTML entities
+    text = text.replace("&amp;", "&")
+    text = text.replace("&lt;", "<")
+    text = text.replace("&gt;", ">")
+    text = text.replace("&nbsp;", " ")
+    text = text.replace("&quot;", '"')
+    text = text.replace("&#39;", "'")
+    text = text.replace("&#9746;", "[X]")
+    text = text.replace("&#9744;", "[ ]")
+    text = text.replace("&#160;", " ")
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _extract_sections(full_text: str, max_length: int) -> str:
+    """Extract the most analytically valuable sections from a 10-K/10-Q filing.
+
+    Prioritizes MD&A and Financial Statements over boilerplate. Falls back
+    to simple truncation if section markers aren't found.
+    """
+    import re
+
+    # Section markers (case-insensitive patterns)
+    section_patterns = [
+        # (label, start_pattern, budget_chars)
+        ("BUSINESS_OVERVIEW", r"(?:Item\s*1\.?\s*Business|PART\s*I\b)", 15_000),
+        ("RISK_FACTORS", r"Item\s*1A\.?\s*Risk\s*Factors?", 15_000),
+        ("MDA", r"Item\s*7\.?\s*Management.s?\s*Discussion", 30_000),
+        ("FINANCIALS", r"Item\s*8\.?\s*Financial\s*Statements?", 20_000),
+    ]
+
+    sections: list[tuple[str, int]] = []
+    for label, pattern, _ in section_patterns:
+        # Collect all matches; prefer the last one (TOC comes first,
+        # actual section header comes later in the filing)
+        matches = list(re.finditer(pattern, full_text, re.IGNORECASE))
+        if matches:
+            # Use the last match — the actual section, not the TOC reference
+            best = matches[-1] if len(matches) > 1 else matches[0]
+            sections.append((label, best.start()))
+
+    # If no sections found, fall back to simple truncation
+    if not sections:
+        logger.info("No section markers found, using simple truncation")
+        if len(full_text) > max_length:
+            return full_text[:max_length] + "\n\n[TRUNCATED]"
+        return full_text
+
+    # Sort sections by position
+    sections.sort(key=lambda x: x[1])
+
+    # Build result from prioritized sections
+    budget_map = {label: budget for label, _, budget in section_patterns}
+    # Prioritize MDA and FINANCIALS — give them more budget
+    priority_order = ["MDA", "FINANCIALS", "BUSINESS_OVERVIEW", "RISK_FACTORS"]
+
+    result_parts: list[str] = []
+    remaining = max_length
+    used_sections: set[str] = set()
+
+    for target_label in priority_order:
+        if remaining <= 0:
+            break
+        for label, pos in sections:
+            if label != target_label or label in used_sections:
+                continue
+            used_sections.add(label)
+
+            budget = min(budget_map.get(label, 15_000), remaining)
+            chunk = full_text[pos:pos + budget]
+            result_parts.append(f"\n--- {label} ---\n{chunk}")
+            remaining -= len(chunk)
+
+    if result_parts:
+        result = "\n".join(result_parts)
+        logger.info(
+            f"Extracted {len(used_sections)} sections: "
+            f"{', '.join(used_sections)} ({len(result):,} chars)"
+        )
+        return result
+
+    # Fallback
+    if len(full_text) > max_length:
+        return full_text[:max_length] + "\n\n[TRUNCATED]"
+    return full_text
+
+
 def _fetch_filing_text(url: str, max_length: int = 100_000) -> str:
     """Fetch and extract text from a filing document.
 
-    Handles both HTML and plain text filings. Strips HTML tags and
-    truncates to max_length characters.
+    Handles both HTML and plain text filings. Strips HTML/iXBRL tags and
+    extracts the most relevant sections (MD&A, financials, business overview).
 
     Args:
         url: Direct URL to the filing document.
@@ -257,8 +367,6 @@ def _fetch_filing_text(url: str, max_length: int = 100_000) -> str:
     Returns:
         Extracted text content.
     """
-    import re
-
     data = _sec_request(url)
 
     try:
@@ -268,27 +376,11 @@ def _fetch_filing_text(url: str, max_length: int = 100_000) -> str:
 
     # Strip HTML tags if present
     if "<html" in text.lower() or "<body" in text.lower():
-        # Remove script and style blocks
-        text = re.sub(
-            r"<(script|style)[^>]*>.*?</\1>", "", text, flags=re.DOTALL | re.IGNORECASE
-        )
-        # Remove HTML tags
-        text = re.sub(r"<[^>]+>", " ", text)
-        # Decode HTML entities
-        text = text.replace("&amp;", "&")
-        text = text.replace("&lt;", "<")
-        text = text.replace("&gt;", ">")
-        text = text.replace("&nbsp;", " ")
-        text = text.replace("&quot;", '"')
-        text = text.replace("&#39;", "'")
+        text = _strip_html(text)
 
-    # Collapse whitespace
-    text = re.sub(r"\s+", " ", text).strip()
-
-    # Truncate
+    # Extract key sections for 10-K/10-Q filings
     if len(text) > max_length:
-        text = text[:max_length] + "\n\n[TRUNCATED — full filing available at URL]"
-        logger.info(f"Filing text truncated to {max_length} chars")
+        text = _extract_sections(text, max_length)
 
     return text
 

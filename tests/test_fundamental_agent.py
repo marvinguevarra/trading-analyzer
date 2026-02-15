@@ -12,8 +12,10 @@ import pytest
 
 from src.utils.sec_fetcher import (
     SECFiling,
+    _extract_sections,
     _fetch_filing_text,
     _rate_limit,
+    _strip_html,
     fetch_filing_by_type,
     fetch_latest_filings,
     lookup_cik,
@@ -246,6 +248,79 @@ class TestFetchFilingByType:
         assert filing is None
 
 
+class TestStripHtml:
+    def test_removes_ix_header(self):
+        html = (
+            '<html><body>'
+            '<ix:header>XBRL metadata context units taxonomy</ix:header>'
+            '<p>Revenue was $10 billion.</p>'
+            '</body></html>'
+        )
+        text = _strip_html(html)
+        assert "XBRL metadata" not in text
+        assert "Revenue was $10 billion" in text
+
+    def test_removes_ix_hidden(self):
+        html = (
+            '<html><body>'
+            '<ix:hidden><ix:nonNumeric>hidden data</ix:nonNumeric></ix:hidden>'
+            '<p>Visible content here.</p>'
+            '</body></html>'
+        )
+        text = _strip_html(html)
+        assert "hidden data" not in text
+        assert "Visible content here" in text
+
+    def test_removes_script_and_style(self):
+        html = (
+            '<html><body>'
+            '<script>var x = 1;</script>'
+            '<style>.foo { color: red; }</style>'
+            '<p>Real content.</p>'
+            '</body></html>'
+        )
+        text = _strip_html(html)
+        assert "var x" not in text
+        assert "color: red" not in text
+        assert "Real content" in text
+
+    def test_decodes_html_entities(self):
+        html = '<html><body><p>A &amp; B &lt; C &gt; D</p></body></html>'
+        text = _strip_html(html)
+        assert "A & B" in text
+        assert "< C >" in text
+
+
+class TestExtractSections:
+    def test_finds_mda_section(self):
+        full = (
+            "Table of contents Item 7. Management's Discussion 32 "
+            "Item 8. Financial Statements 53 "
+            + "x" * 100_000
+            + " ITEM 7. MANAGEMENT'S DISCUSSION AND ANALYSIS "
+            + "Revenue was $10 billion. Net earnings were $500 million. " * 100
+            + " ITEM 8. FINANCIAL STATEMENTS "
+            + "Consolidated balance sheet data here. " * 100
+        )
+        result = _extract_sections(full, max_length=5000)
+        assert "MDA" in result
+        assert "Revenue was $10 billion" in result
+
+    def test_falls_back_to_truncation(self):
+        full = "No section markers here. " * 10_000
+        result = _extract_sections(full, max_length=500)
+        assert len(result) <= 600
+        assert "TRUNCATED" in result
+
+    def test_respects_max_length(self):
+        full = (
+            "ITEM 7. MANAGEMENT'S DISCUSSION " + "x" * 50_000
+            + " ITEM 8. FINANCIAL STATEMENTS " + "y" * 50_000
+        )
+        result = _extract_sections(full, max_length=10_000)
+        assert len(result) <= 11_000
+
+
 class TestFetchFilingText:
     @patch(
         "src.utils.sec_fetcher._sec_request",
@@ -265,14 +340,21 @@ class TestFetchFilingText:
         text = _fetch_filing_text("https://example.com/filing.txt")
         assert text == "Plain text filing content here."
 
-    @patch(
-        "src.utils.sec_fetcher._sec_request",
-        return_value=b"x" * 200_000,
-    )
-    def test_truncation(self, mock_req):
-        text = _fetch_filing_text("https://example.com/big.htm", max_length=1000)
-        assert len(text) < 1100  # 1000 + truncation message
-        assert "TRUNCATED" in text
+    @patch("src.utils.sec_fetcher._sec_request")
+    def test_ixbrl_strips_header(self, mock_req):
+        ixbrl = (
+            '<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL">'
+            '<body>'
+            '<ix:header><ix:references/><ix:resources>'
+            'us-gaap:Revenue xbrli:shares 0000106640 '
+            '</ix:resources></ix:header>'
+            '<p>Revenue for 2025 was $19 billion.</p>'
+            '</body></html>'
+        )
+        mock_req.return_value = ixbrl.encode()
+        text = _fetch_filing_text("https://example.com/filing.htm")
+        assert "xbrli:shares" not in text
+        assert "Revenue for 2025" in text
 
 
 # ── FundamentalAgent ─────────────────────────────────────────
