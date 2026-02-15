@@ -141,20 +141,26 @@ async def health():
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     key_prefix = os.environ.get("ANTHROPIC_API_KEY", "")[:10] + "..." if has_key else None
 
-    # Test outbound connectivity
-    net_status = "unknown"
-    try:
-        import httpx
-        r = httpx.get("https://api.anthropic.com", timeout=5)
-        net_status = f"reachable (HTTP {r.status_code})"
-    except Exception as e:
-        net_status = f"unreachable: {type(e).__name__}: {e}"
+    # Test actual Haiku call
+    api_test = "skipped"
+    if has_key:
+        try:
+            import anthropic as anth
+            client = anth.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20250514",
+                max_tokens=8,
+                messages=[{"role": "user", "content": "Reply: OK"}],
+            )
+            api_test = f"ok: {resp.content[0].text.strip()}"
+        except Exception as e:
+            api_test = f"{type(e).__name__}: {e}"
 
     return {
         "status": "ok",
         "anthropic_key_set": has_key,
         "key_prefix": key_prefix,
-        "anthropic_api_reachable": net_status,
+        "api_test": api_test,
     }
 
 
