@@ -4,9 +4,9 @@ Tracks token usage and calculates costs per model. Provides running totals
 and budget warnings.
 
 Pricing (per 1K tokens):
-  - Haiku:  $0.001 input / $0.005 output
-  - Sonnet: $0.003 input / $0.015 output
-  - Opus:   $0.015 input / $0.075 output
+  - Haiku:  $0.00025 input / $0.00125 output  ($0.25/$1.25 per MTok)
+  - Sonnet: $0.003 input   / $0.015 output     ($3/$15 per MTok)
+  - Opus:   $0.015 input   / $0.075 output     ($15/$75 per MTok)
 """
 
 from dataclasses import dataclass, field
@@ -19,7 +19,7 @@ logger = get_logger("cost_tracker")
 
 # Default pricing per 1K tokens
 DEFAULT_PRICING = {
-    "haiku": {"input": 0.001, "output": 0.005},
+    "haiku": {"input": 0.00025, "output": 0.00125},
     "sonnet": {"input": 0.003, "output": 0.015},
     "opus": {"input": 0.015, "output": 0.075},
 }

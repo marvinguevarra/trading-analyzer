@@ -13,11 +13,11 @@ import yaml
 DEFAULTS = {
     "models": {
         "haiku": {
-            "model_id": "claude-3-5-haiku-20241022",
+            "model_id": "claude-haiku-4-5-20250514",
             "max_tokens": 4096,
             "temperature": 0.0,
-            "cost_per_1k_input": 0.001,
-            "cost_per_1k_output": 0.005,
+            "cost_per_1k_input": 0.00025,
+            "cost_per_1k_output": 0.00125,
         },
         "sonnet": {
             "model_id": "claude-sonnet-4-5-20250929",
@@ -27,7 +27,7 @@ DEFAULTS = {
             "cost_per_1k_output": 0.015,
         },
         "opus": {
-            "model_id": "claude-opus-4-6",
+            "model_id": "claude-opus-4-5-20251101",
             "max_tokens": 16384,
             "temperature": 0.0,
             "cost_per_1k_input": 0.015,
