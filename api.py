@@ -27,6 +27,7 @@ from src.analyzers.gap_analyzer import detect_gaps, summarize_gaps
 from src.analyzers.sr_calculator import calculate_levels, summarize_levels
 from src.analyzers.supply_demand import identify_zones, summarize_zones
 from src.orchestrator import TradingAnalysisOrchestrator
+from src.utils.cache import AnalysisCache
 from src.utils.tier_config import list_tiers
 
 app = FastAPI(
@@ -44,6 +45,7 @@ app.add_middleware(
 )
 
 SAMPLES_DIR = Path(__file__).parent / "data" / "samples"
+cache = AnalysisCache(cache_dir="data/cache", ttl_hours=6)
 
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -132,6 +134,9 @@ async def root():
             "POST /analyze/levels",
             "POST /analyze/zones",
             "GET  /analyze/sample/{filename}",
+            "GET  /cache/stats",
+            "DELETE /cache",
+            "DELETE /cache/{symbol}",
         ],
     }
 
@@ -309,6 +314,7 @@ async def analyze_full(
     tier: str = Query("standard", description="Analysis tier: lite, standard, premium"),
     format: str = Query("json", description="Output format: json, markdown, html"),
     min_gap_pct: float = Query(2.0, ge=0, le=50, description="Min gap size %"),
+    force_fresh: bool = Query(False, description="Bypass cache and run fresh analysis"),
 ):
     """Upload a TradingView CSV and run full AI-powered analysis.
 
@@ -316,6 +322,7 @@ async def analyze_full(
     The tier parameter controls analysis depth and cost.
     The format parameter controls the response format (json, markdown, html).
     Symbol is auto-detected from filename if not provided.
+    Results are cached by symbol+tier+date (6h TTL). Use force_fresh=true to bypass.
     """
     if not file.filename:
         raise HTTPException(400, "Filename is required")
@@ -332,6 +339,24 @@ async def analyze_full(
     # Auto-detect symbol from parsed CSV if not provided
     effective_symbol = symbol or parsed.symbol
 
+    # Check cache (unless force_fresh)
+    if not force_fresh:
+        cached = cache.get(effective_symbol, tier)
+        if cached:
+            fmt = format.lower()
+            if fmt == "json":
+                return _sanitize(cached)
+            elif fmt == "markdown":
+                orchestrator = TradingAnalysisOrchestrator(tier=tier)
+                report = orchestrator.generate_report(cached, format="markdown")
+                return PlainTextResponse(content=report, media_type="text/markdown")
+            elif fmt == "html":
+                orchestrator = TradingAnalysisOrchestrator(tier=tier)
+                report = orchestrator.generate_report(cached, format="html")
+                return HTMLResponse(content=report)
+            else:
+                raise HTTPException(400, f"Unknown format '{format}'. Choose: json, markdown, html")
+
     try:
         orchestrator = TradingAnalysisOrchestrator(tier=tier)
         result = orchestrator.analyze_from_parsed(
@@ -339,6 +364,9 @@ async def analyze_full(
             parsed=parsed,
             min_gap_pct=min_gap_pct,
         )
+
+        # Cache the fresh result
+        cache.set(effective_symbol, tier, _sanitize(result))
 
         fmt = format.lower()
         if fmt == "json":
@@ -377,3 +405,26 @@ async def analyze_sample(
 
     parsed = load_csv(str(sample_path))
     return _run_full_analysis(parsed, min_gap_pct)
+
+
+# ── Cache management ─────────────────────────────────────────
+
+
+@app.get("/cache/stats")
+async def cache_stats():
+    """Return cache statistics."""
+    return cache.stats()
+
+
+@app.delete("/cache")
+async def clear_all_cache():
+    """Clear entire cache."""
+    count = cache.clear()
+    return {"cleared": count}
+
+
+@app.delete("/cache/{symbol}")
+async def clear_symbol_cache(symbol: str):
+    """Clear cache for a specific symbol."""
+    count = cache.clear(symbol)
+    return {"cleared": count, "symbol": symbol.upper()}
