@@ -226,12 +226,12 @@ class TestSRCalculator:
         for level in levels:
             assert 1 <= level.strength <= 10
 
-    def test_levels_sorted_by_strength(self):
-        """Levels should be returned sorted by strength descending."""
+    def test_levels_sorted_by_strength_score(self):
+        """Levels should be returned sorted by strength_score descending."""
         df = get_whr_data()
         levels = calculate_levels(df)
-        strengths = [l.strength for l in levels]
-        assert strengths == sorted(strengths, reverse=True)
+        scores = [l.strength_score for l in levels]
+        assert scores == sorted(scores, reverse=True)
 
     def test_summarize_levels(self):
         """Summary should contain key fields."""

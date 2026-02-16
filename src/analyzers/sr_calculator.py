@@ -30,27 +30,58 @@ class SRLevel:
     level_type: str  # "support", "resistance", or "both"
     source: str  # "swing", "volume", "round_number", "ma_cluster"
     strength: int  # 1-10 significance score
-    touches: int  # Number of times price tested this level
-    last_test_date: Optional[datetime]
-    zone_low: float  # Lower bound of the zone
-    zone_high: float  # Upper bound of the zone
+    strength_score: int = 0  # 0-100 composite score
+    touches: int = 0  # Number of times price tested this level
+    breaks: int = 0  # Number of times price broke through this level
+    last_test_date: Optional[datetime] = None
+    zone_low: float = 0.0  # Lower bound of the zone
+    zone_high: float = 0.0  # Upper bound of the zone
 
     @property
     def zone_width(self) -> float:
         return self.zone_high - self.zone_low
 
+    @property
+    def strength_label(self) -> str:
+        if self.strength_score >= 70:
+            return "strong"
+        elif self.strength_score >= 40:
+            return "moderate"
+        return "weak"
+
+    @property
+    def days_since_test(self) -> Optional[int]:
+        if self.last_test_date is None:
+            return None
+        delta = datetime.now() - self.last_test_date
+        return delta.days
+
+    @property
+    def status(self) -> str:
+        if self.breaks == 0:
+            return "held"
+        elif self.breaks >= self.touches // 2:
+            return "broken"
+        return "tested"
+
     def to_dict(self) -> dict:
+        days = self.days_since_test
         return {
             "price": round(self.price, 2),
             "type": self.level_type,
             "source": self.source,
             "strength": self.strength,
+            "strength_score": self.strength_score,
+            "strength_label": self.strength_label,
             "touches": self.touches,
+            "breaks": self.breaks,
+            "status": self.status,
             "last_test": (
                 self.last_test_date.isoformat()
                 if isinstance(self.last_test_date, datetime)
                 else str(self.last_test_date) if self.last_test_date else None
             ),
+            "days_since_test": days,
             "zone": [round(self.zone_low, 2), round(self.zone_high, 2)],
         }
 
@@ -115,18 +146,19 @@ def calculate_levels(
         else:
             level.level_type = "both"
 
-    # Calculate touch counts
+    # Calculate touch counts and breaks
     for level in merged:
-        level.touches, level.last_test_date = _count_touches(
-            analysis_df, level.zone_low, level.zone_high
+        level.touches, level.breaks, level.last_test_date = _count_touches(
+            analysis_df, level.zone_low, level.zone_high, level.level_type
         )
 
     # Recalculate strength with touch data
     for level in merged:
         level.strength = _calculate_strength(level, current_price, len(analysis_df))
+        level.strength_score = _calculate_strength_score(level, analysis_df)
 
-    # Sort by strength
-    merged.sort(key=lambda x: -x.strength)
+    # Sort by strength_score (composite 0-100)
+    merged.sort(key=lambda x: -x.strength_score)
 
     logger.info(
         f"Found {len(merged)} S/R levels: "
@@ -317,10 +349,15 @@ def _merge_nearby_levels(
 
 
 def _count_touches(
-    df: pd.DataFrame, zone_low: float, zone_high: float
-) -> tuple[int, Optional[datetime]]:
-    """Count how many bars touched a price zone."""
+    df: pd.DataFrame, zone_low: float, zone_high: float, level_type: str = "support"
+) -> tuple[int, int, Optional[datetime]]:
+    """Count how many bars touched a price zone and how many broke through.
+
+    Returns:
+        (touches, breaks, last_touch_date)
+    """
     touches = 0
+    breaks = 0
     last_touch = None
 
     for _, row in df.iterrows():
@@ -329,7 +366,13 @@ def _count_touches(
             touches += 1
             last_touch = pd.Timestamp(row["time"]).to_pydatetime()
 
-    return touches, last_touch
+            # Check if it broke through
+            if level_type == "support" and row["close"] < zone_low:
+                breaks += 1
+            elif level_type == "resistance" and row["close"] > zone_high:
+                breaks += 1
+
+    return touches, breaks, last_touch
 
 
 def _calculate_strength(
@@ -374,6 +417,46 @@ def _calculate_strength(
     return max(1, min(10, round(score)))
 
 
+def _calculate_strength_score(level: SRLevel, df: pd.DataFrame) -> int:
+    """Calculate composite strength score (0-100).
+
+    Components:
+    - Touch count (0-40): more touches = stronger
+    - Volume (0-20): higher volume at level = stronger
+    - Recency (0-20): more recent test = stronger
+    - Held vs broken (0-20): fewer breaks = stronger
+    """
+    score = 0
+
+    # Touch count (0-40 points, 4 pts per touch, max 40)
+    score += min(level.touches * 4, 40)
+
+    # Volume component (0-20 points)
+    # Use volume percentile if available; simplified: source-based proxy
+    if "volume" in level.source:
+        score += 15
+    elif level.source == "swing":
+        score += 10
+    else:
+        score += 5
+
+    # Recency (0-20 points): lose 2 pts per day since last test
+    days = level.days_since_test
+    if days is not None:
+        recency = max(0, 20 - (days * 2))
+        score += recency
+    else:
+        score += 5  # Unknown recency gets partial credit
+
+    # Held vs broken (0-20 points)
+    if level.breaks == 0:
+        score += 20
+    else:
+        score += max(0, 20 - (level.breaks * 5))
+
+    return max(0, min(100, score))
+
+
 def summarize_levels(levels: list[SRLevel], current_price: float) -> dict:
     """Generate a summary of S/R analysis results."""
     support = [l for l in levels if l.level_type == "support"]
@@ -392,5 +475,13 @@ def summarize_levels(levels: list[SRLevel], current_price: float) -> dict:
         "resistance_levels": [l.to_dict() for l in sorted(resistance, key=lambda x: x.price)],
         "nearest_support": nearest_support.to_dict() if nearest_support else None,
         "nearest_resistance": nearest_resistance.to_dict() if nearest_resistance else None,
-        "key_levels": [l.to_dict() for l in levels[:5]],  # Top 5 by strength
+        "key_levels": [l.to_dict() for l in levels[:5]],  # Top 5 by strength_score
+        "explanation": (
+            "Support levels show where price historically found buying pressure. "
+            "Resistance levels show where selling pressure emerged. "
+            "More touches = stronger level. "
+            "Strong (70+): very likely to hold. "
+            "Moderate (40-69): may hold but watch for breaks. "
+            "Weak (<40): could break easily."
+        ),
     }

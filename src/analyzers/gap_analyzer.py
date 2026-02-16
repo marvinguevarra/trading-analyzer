@@ -44,12 +44,24 @@ class Gap:
     def midpoint(self) -> float:
         return (self.gap_low + self.gap_high) / 2
 
+    @property
+    def days_ago(self) -> Optional[int]:
+        if self.date is None:
+            return None
+        try:
+            delta = datetime.now() - self.date
+            return delta.days
+        except Exception:
+            return None
+
     def to_dict(self) -> dict:
+        days = self.days_ago
         return {
             "date": self.date.isoformat() if isinstance(self.date, datetime) else str(self.date),
             "direction": self.direction,
             "gap_low": round(self.gap_low, 2),
             "gap_high": round(self.gap_high, 2),
+            "range": f"${self.gap_low:.2f} - ${self.gap_high:.2f}",
             "size": round(self.size, 2),
             "size_pct": round(self.size_pct, 2),
             "gap_type": self.gap_type,
@@ -57,22 +69,27 @@ class Gap:
             "fill_pct": round(self.fill_pct, 2),
             "fill_date": self.fill_date.isoformat() if self.fill_date else None,
             "bars_since": self.bars_since,
+            "days_ago": days,
             "severity": self.severity,
         }
 
 
 def detect_gaps(
     df: pd.DataFrame,
-    min_gap_pct: float = 2.0,
+    min_gap_pct: float = 0.5,
+    include_body_gaps: bool = True,
 ) -> list[Gap]:
     """Detect all price gaps in the data.
 
-    A gap up occurs when the current bar's low > previous bar's high.
-    A gap down occurs when the current bar's high < previous bar's low.
+    Two detection modes:
+    - Wick gaps: current bar's low > previous bar's high (classic true gap)
+    - Body gaps: current open vs previous close (more sensitive, catches
+      gaps where wicks overlap but bodies don't)
 
     Args:
         df: DataFrame with columns [time, open, high, low, close, volume].
-        min_gap_pct: Minimum gap size as percentage to include.
+        min_gap_pct: Minimum gap size as percentage to include (default 0.5%).
+        include_body_gaps: Also detect open-vs-close gaps (default True).
 
     Returns:
         List of detected gaps, sorted by date.
@@ -81,6 +98,7 @@ def detect_gaps(
         return []
 
     gaps = []
+    seen_dates: set[str] = set()  # Avoid duplicate gaps on same bar
 
     for i in range(1, len(df)):
         prev_high = df["high"].iloc[i - 1]
@@ -90,84 +108,48 @@ def detect_gaps(
         curr_low = df["low"].iloc[i]
         curr_open = df["open"].iloc[i]
         curr_time = df["time"].iloc[i]
+        date_key = str(curr_time)
+
+        # --- Wick gaps (classic: no overlap between bars) ---
 
         # Gap up: current low > previous high
         if curr_low > prev_high:
             size = curr_low - prev_high
             size_pct = (size / prev_close) * 100
             if size_pct >= min_gap_pct:
-                gap_low = prev_high
-                gap_high = curr_low
-
-                # Check fill status
-                filled, fill_pct, fill_date = _check_fill(
-                    df, i, gap_low, gap_high, "up"
-                )
-
-                # Classify gap type
-                gap_type = _classify_gap(
-                    df, i, size_pct, "up"
-                )
-
-                bars_since = len(df) - 1 - i
-                severity = _calculate_severity(
-                    size_pct, gap_type, filled, bars_since, df, i
-                )
-
-                gaps.append(
-                    Gap(
-                        date=pd.Timestamp(curr_time).to_pydatetime(),
-                        direction="up",
-                        gap_low=gap_low,
-                        gap_high=gap_high,
-                        size=size,
-                        size_pct=size_pct,
-                        gap_type=gap_type,
-                        filled=filled,
-                        fill_pct=fill_pct,
-                        fill_date=fill_date,
-                        bars_since=bars_since,
-                        severity=severity,
-                    )
-                )
+                gap = _build_gap(df, i, prev_high, curr_low, size, size_pct, "up")
+                gaps.append(gap)
+                seen_dates.add(date_key)
 
         # Gap down: current high < previous low
         elif curr_high < prev_low:
             size = prev_low - curr_high
             size_pct = (size / prev_close) * 100
             if size_pct >= min_gap_pct:
-                gap_low = curr_high
-                gap_high = prev_low
+                gap = _build_gap(df, i, curr_high, prev_low, size, size_pct, "down")
+                gaps.append(gap)
+                seen_dates.add(date_key)
 
-                filled, fill_pct, fill_date = _check_fill(
-                    df, i, gap_low, gap_high, "down"
-                )
+        # --- Body gaps (open vs prev close) ---
+        elif include_body_gaps and date_key not in seen_dates:
+            body_gap = curr_open - prev_close
+            body_gap_pct = abs(body_gap / prev_close) * 100
 
-                gap_type = _classify_gap(
-                    df, i, size_pct, "down"
-                )
-
-                bars_since = len(df) - 1 - i
-                severity = _calculate_severity(
-                    size_pct, gap_type, filled, bars_since, df, i
-                )
-
-                gaps.append(
-                    Gap(
-                        date=pd.Timestamp(curr_time).to_pydatetime(),
-                        direction="down",
-                        gap_low=gap_low,
-                        gap_high=gap_high,
-                        size=size,
-                        size_pct=size_pct,
-                        gap_type=gap_type,
-                        filled=filled,
-                        fill_pct=fill_pct,
-                        fill_date=fill_date,
-                        bars_since=bars_since,
-                        severity=severity,
+            if body_gap_pct >= min_gap_pct:
+                if body_gap > 0:
+                    # Body gap up
+                    gap = _build_gap(
+                        df, i, prev_close, curr_open,
+                        abs(body_gap), body_gap_pct, "up",
                     )
-                )
+                    gaps.append(gap)
+                else:
+                    # Body gap down
+                    gap = _build_gap(
+                        df, i, curr_open, prev_close,
+                        abs(body_gap), body_gap_pct, "down",
+                    )
+                    gaps.append(gap)
 
     logger.info(
         f"Detected {len(gaps)} gaps (min {min_gap_pct}%): "
@@ -177,6 +159,43 @@ def detect_gaps(
     )
 
     return gaps
+
+
+def _build_gap(
+    df: pd.DataFrame,
+    bar_idx: int,
+    gap_low: float,
+    gap_high: float,
+    size: float,
+    size_pct: float,
+    direction: str,
+) -> Gap:
+    """Construct a Gap object with fill check, classification, and severity."""
+    curr_time = df["time"].iloc[bar_idx]
+
+    filled, fill_pct, fill_date = _check_fill(
+        df, bar_idx, gap_low, gap_high, direction
+    )
+    gap_type = _classify_gap(df, bar_idx, size_pct, direction)
+    bars_since = len(df) - 1 - bar_idx
+    severity = _calculate_severity(
+        size_pct, gap_type, filled, bars_since, df, bar_idx
+    )
+
+    return Gap(
+        date=pd.Timestamp(curr_time).to_pydatetime(),
+        direction=direction,
+        gap_low=gap_low,
+        gap_high=gap_high,
+        size=size,
+        size_pct=size_pct,
+        gap_type=gap_type,
+        filled=filled,
+        fill_pct=fill_pct,
+        fill_date=fill_date,
+        bars_since=bars_since,
+        severity=severity,
+    )
 
 
 def _check_fill(
@@ -346,7 +365,17 @@ def get_unfilled_gaps(gaps: list[Gap]) -> list[Gap]:
 def summarize_gaps(gaps: list[Gap]) -> dict:
     """Generate a summary of gap analysis results."""
     if not gaps:
-        return {"total": 0, "unfilled": 0, "gaps": []}
+        return {
+            "total": 0,
+            "unfilled": 0,
+            "gaps": [],
+            "message": "No gaps detected with current threshold.",
+            "explanation": (
+                "Gaps form when price opens significantly above or below "
+                "the previous close. Unfilled gaps often act as magnets — "
+                "price tends to return to fill them."
+            ),
+        }
 
     unfilled = get_unfilled_gaps(gaps)
     prioritized = prioritize_gaps(gaps)
@@ -365,4 +394,11 @@ def summarize_gaps(gaps: list[Gap]) -> dict:
         },
         "largest_unfilled": prioritized[0].to_dict() if unfilled else None,
         "gaps": [g.to_dict() for g in prioritized],
+        "explanation": (
+            "Gaps form when price opens significantly above or below "
+            "the previous close. Unfilled gaps often act as magnets — "
+            "price tends to return to fill them. "
+            "Breakaway gaps signal new trends. "
+            "Common gaps usually fill quickly."
+        ),
     }
