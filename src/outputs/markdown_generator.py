@@ -162,12 +162,13 @@ class MarkdownGenerator:
         if not self.news:
             return ""
 
-        lines = ["## News & Sentiment\n"]
+        lines = ["## News Sentiment\n"]
 
         score = self.news.get("sentiment_score")
-        label = self.news.get("sentiment_label", "")
+        ns = self.news.get("news_sentiment", {})
+        interpretation = ns.get("interpretation", "")
         if score is not None:
-            lines.append(f"**Sentiment Score:** {score}/10 ({label})\n")
+            lines.append(f"**Sentiment Score:** {score}/10 ({interpretation})\n")
 
         articles = self.news.get("article_count", 0)
         lines.append(f"**Articles Analyzed:** {articles}\n")

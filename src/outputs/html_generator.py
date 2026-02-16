@@ -275,10 +275,17 @@ footer {
 
         parts = []
         score = self.news.get("sentiment_score")
-        label = _esc(str(self.news.get("sentiment_label", "")))
+        ns = self.news.get("news_sentiment", {})
+        interpretation = _esc(ns.get("interpretation", ""))
+        color = _esc(ns.get("color", "gray"))
+        tooltip = _esc(ns.get("tooltip", ""))
         if score is not None:
-            parts.append(f'<div class="metric"><span class="metric-label">Sentiment</span><br>'
-                         f'<span class="metric-value">{score}/10 ({label})</span></div>')
+            parts.append(
+                f'<div class="metric" title="{tooltip}">'
+                f'<span class="metric-label">Sentiment</span><br>'
+                f'<span class="metric-value" style="color:{color}">'
+                f'{score}/10 ({interpretation})</span></div>'
+            )
 
         articles = self.news.get("article_count", 0)
         parts.append(f'<div class="metric"><span class="metric-label">Articles</span><br>'
@@ -298,7 +305,7 @@ footer {
         if summary:
             parts.append(f"<h4>Summary</h4><p>{_esc(summary)}</p>")
 
-        return self._section("News & Sentiment", "\n".join(parts))
+        return self._section("News Sentiment", "\n".join(parts))
 
     def _fundamental_html(self) -> str:
         """Fundamental analysis section."""

@@ -274,17 +274,16 @@ def _build_sentiment_summary(score: float, impacts: list[str]) -> dict:
     Returns:
         Dict with score, interpretation, methodology, breakdown.
     """
-    # Interpret score
+    # Interpret score — three-tier labels with colors for frontend
     if score >= 7:
-        interpretation = "bullish"
+        interpretation = "Bullish"
+        color = "green"
     elif score >= 5:
-        interpretation = "slightly_bullish"
-    elif score >= 4:
-        interpretation = "neutral"
-    elif score >= 2:
-        interpretation = "slightly_bearish"
+        interpretation = "Neutral"
+        color = "gray"
     else:
-        interpretation = "bearish"
+        interpretation = "Bearish"
+        color = "red"
 
     positive = sum(1 for i in impacts if i == "positive")
     neutral = sum(1 for i in impacts if i == "neutral")
@@ -294,21 +293,20 @@ def _build_sentiment_summary(score: float, impacts: list[str]) -> dict:
         "score": round(score, 1),
         "max_score": 10,
         "interpretation": interpretation,
+        "color": color,
         "methodology": (
-            f"Analyzed sentiment of {len(impacts)} recent headlines "
-            f"using AI-powered analysis. Score represents overall "
-            f"market tone toward this ticker."
+            "Analyzes recent news headlines using NLP to gauge market "
+            "sentiment. Higher scores indicate more positive coverage."
         ),
         "breakdown": {
             "positive_headlines": positive,
             "neutral_headlines": neutral,
             "negative_headlines": negative,
         },
-        "explanation": (
-            "News Headline Sentiment analyzes recent news articles "
-            "to gauge market tone. "
-            "7-10: Bullish. 5-7: Slightly Bullish. "
-            "4-5: Neutral. 2-4: Slightly Bearish. 0-2: Bearish."
+        "tooltip": (
+            "Score ranges: 7-10 Bullish (green), "
+            "5-7 Neutral (gray), 0-5 Bearish (red). "
+            f"Based on {len(impacts)} recent headlines."
         ),
     }
 
