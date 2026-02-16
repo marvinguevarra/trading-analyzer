@@ -166,11 +166,15 @@ class NewsAgent:
             analysis.get("headline_analysis", []), sources
         )
 
+        score = float(analysis.get("sentiment_score", 5.0))
+        headline_impacts = [h.get("impact", "neutral") for h in headlines]
+
         result = {
             "symbol": symbol,
             "headlines": headlines,
-            "sentiment_score": float(analysis.get("sentiment_score", 5.0)),
+            "sentiment_score": score,
             "sentiment_label": analysis.get("sentiment_label", "neutral"),
+            "news_sentiment": _build_sentiment_summary(score, headline_impacts),
             "catalysts": analysis.get("catalysts", []),
             "key_themes": analysis.get("key_themes", []),
             "summary": analysis.get("summary", "No analysis available."),
@@ -244,6 +248,7 @@ class NewsAgent:
             "headlines": [],
             "sentiment_score": 5.0,
             "sentiment_label": "neutral",
+            "news_sentiment": _build_sentiment_summary(5.0, []),
             "catalysts": [],
             "key_themes": [],
             "summary": f"No news found for {symbol}.",
@@ -257,6 +262,55 @@ class NewsAgent:
             "input_tokens": 0,
             "output_tokens": 0,
         }
+
+
+def _build_sentiment_summary(score: float, impacts: list[str]) -> dict:
+    """Build a structured sentiment summary with interpretation and breakdown.
+
+    Args:
+        score: Sentiment score 1-10.
+        impacts: List of headline impact strings ("positive"/"negative"/"neutral").
+
+    Returns:
+        Dict with score, interpretation, methodology, breakdown.
+    """
+    # Interpret score
+    if score >= 7:
+        interpretation = "bullish"
+    elif score >= 5:
+        interpretation = "slightly_bullish"
+    elif score >= 4:
+        interpretation = "neutral"
+    elif score >= 2:
+        interpretation = "slightly_bearish"
+    else:
+        interpretation = "bearish"
+
+    positive = sum(1 for i in impacts if i == "positive")
+    neutral = sum(1 for i in impacts if i == "neutral")
+    negative = sum(1 for i in impacts if i == "negative")
+
+    return {
+        "score": round(score, 1),
+        "max_score": 10,
+        "interpretation": interpretation,
+        "methodology": (
+            f"Analyzed sentiment of {len(impacts)} recent headlines "
+            f"using AI-powered analysis. Score represents overall "
+            f"market tone toward this ticker."
+        ),
+        "breakdown": {
+            "positive_headlines": positive,
+            "neutral_headlines": neutral,
+            "negative_headlines": negative,
+        },
+        "explanation": (
+            "News Headline Sentiment analyzes recent news articles "
+            "to gauge market tone. "
+            "7-10: Bullish. 5-7: Slightly Bullish. "
+            "4-5: Neutral. 2-4: Slightly Bearish. 0-2: Bearish."
+        ),
+    }
 
 
 def _build_headlines(
