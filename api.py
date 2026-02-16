@@ -97,13 +97,15 @@ VALID_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d", "1wk", "1mo"]
 
 def _validate_ticker(ticker: Optional[str]) -> str:
     """Validate and normalize a ticker symbol. Returns uppercased ticker."""
+    import re
     if not ticker or not ticker.strip():
         raise HTTPException(400, "Ticker is required for ticker mode")
     ticker = ticker.strip().upper()
-    if len(ticker) < 1 or len(ticker) > 5:
-        raise HTTPException(400, "Ticker must be 1-5 characters")
-    if not ticker.isalpha():
-        raise HTTPException(400, "Ticker must contain only letters")
+    if not re.match(r'^[A-Z0-9.]{1,6}$', ticker):
+        raise HTTPException(
+            400,
+            "Ticker must be 1-6 characters: letters, digits, or dots (e.g. AAPL, BRK.B)",
+        )
     return ticker
 
 
