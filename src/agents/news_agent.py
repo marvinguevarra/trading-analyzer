@@ -36,7 +36,14 @@ Your response format:
   "key_themes": ["<theme 1>", "<theme 2>"],
   "summary": "<2-3 sentence summary of the overall news sentiment and key takeaways>",
   "headline_analysis": [
-    {"headline": "<headline text>", "impact": "<positive|negative|neutral>", "relevance": "<high|medium|low>"}
+    {
+      "headline": "<headline text>",
+      "url": "<full article URL from the search result>",
+      "source": "<source name, e.g. Reuters, Bloomberg, CNBC>",
+      "published_date": "<date string if available, e.g. 2026-02-15>",
+      "impact": "<positive|negative|neutral>",
+      "relevance": "<high|medium|low>"
+    }
   ],
   "key_developments": ["<development 1>", "<development 2>"],
   "analyst_actions": ["<action 1>", "<action 2>"]
@@ -46,7 +53,9 @@ Rules:
 - sentiment_score: Use the full 1-10 scale. 5 = truly neutral.
 - catalysts: Specific upcoming or recent events that could move the stock.
 - key_themes: Recurring topics across multiple articles.
-- headline_analysis: Analyze the top 5 most relevant headlines.
+- headline_analysis: Analyze the top 5-8 most relevant headlines.
+  IMPORTANT: Include the url and source for each headline from the
+  search results you found. The url must be the actual article URL.
 - key_developments: Major news from the last 24-48 hours.
 - analyst_actions: Recent analyst upgrades, downgrades, or price target changes.
 - Be objective. Only report facts found in the search results.\
@@ -152,14 +161,10 @@ class NewsAgent:
                 description=f"web_search: {symbol} news",
             )
 
-        # Build headlines from headline_analysis or key_developments
-        headlines = []
-        for item in analysis.get("headline_analysis", []):
-            headlines.append({
-                "title": item.get("headline", ""),
-                "date": "",
-                "source": "",
-            })
+        # Build headlines with URL/source metadata
+        headlines = _build_headlines(
+            analysis.get("headline_analysis", []), sources
+        )
 
         result = {
             "symbol": symbol,
@@ -231,7 +236,8 @@ class NewsAgent:
             output_tokens / 1_000_000 * 1.25
         )
 
-    def _empty_result(self, symbol: str) -> dict:
+    @staticmethod
+    def _empty_result(symbol: str) -> dict:
         """Return empty result when search fails."""
         return {
             "symbol": symbol,
@@ -251,3 +257,118 @@ class NewsAgent:
             "input_tokens": 0,
             "output_tokens": 0,
         }
+
+
+def _build_headlines(
+    headline_analysis: list[dict], sources: list[dict]
+) -> list[dict]:
+    """Build enriched headline objects with URL and source metadata.
+
+    Uses URLs/sources from Claude's headline_analysis first, then falls
+    back to matching against the web_search_tool_result sources list.
+
+    Args:
+        headline_analysis: Claude's analyzed headlines (may include url/source).
+        sources: Raw web search result sources with title and url.
+
+    Returns:
+        List of headline dicts with title, url, source, published_at.
+    """
+    headlines = []
+
+    for item in headline_analysis:
+        title = item.get("headline", "")
+        url = item.get("url", "")
+        source = item.get("source", "")
+        published = item.get("published_date", "")
+
+        # If Claude didn't provide a URL, try to match against sources
+        if not url and sources:
+            url, matched_source = _match_source(title, sources)
+            if not source and matched_source:
+                source = matched_source
+
+        headlines.append({
+            "title": title,
+            "url": url,
+            "source": source,
+            "published_at": published,
+            "impact": item.get("impact", "neutral"),
+            "relevance": item.get("relevance", "medium"),
+        })
+
+    return headlines
+
+
+def _match_source(title: str, sources: list[dict]) -> tuple[str, str]:
+    """Try to match a headline to a web search source by title similarity.
+
+    Returns:
+        (url, source_domain) or ("", "") if no match found.
+    """
+    if not title or not sources:
+        return "", ""
+
+    title_lower = title.lower()
+    title_words = set(title_lower.split())
+
+    best_url = ""
+    best_source = ""
+    best_overlap = 0
+
+    for src in sources:
+        src_title = src.get("title", "").lower()
+        src_words = set(src_title.split())
+
+        # Count word overlap
+        overlap = len(title_words & src_words)
+        if overlap > best_overlap and overlap >= 2:
+            best_overlap = overlap
+            best_url = src.get("url", "")
+            # Extract domain as source name
+            best_source = _domain_to_source(best_url)
+
+    return best_url, best_source
+
+
+def _domain_to_source(url: str) -> str:
+    """Extract a human-readable source name from a URL."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower()
+        # Remove www. prefix
+        domain = domain.removeprefix("www.")
+
+        # Map known domains to clean names
+        domain_map = {
+            "reuters.com": "Reuters",
+            "bloomberg.com": "Bloomberg",
+            "cnbc.com": "CNBC",
+            "wsj.com": "Wall Street Journal",
+            "ft.com": "Financial Times",
+            "marketwatch.com": "MarketWatch",
+            "finance.yahoo.com": "Yahoo Finance",
+            "seekingalpha.com": "Seeking Alpha",
+            "fool.com": "Motley Fool",
+            "barrons.com": "Barron's",
+            "investopedia.com": "Investopedia",
+            "thestreet.com": "TheStreet",
+            "benzinga.com": "Benzinga",
+            "tipranks.com": "TipRanks",
+            "nasdaq.com": "Nasdaq",
+            "nypost.com": "NY Post",
+            "cnn.com": "CNN",
+            "bbc.com": "BBC",
+            "apnews.com": "AP News",
+        }
+
+        if domain in domain_map:
+            return domain_map[domain]
+
+        # Fall back to cleaned domain
+        parts = domain.split(".")
+        return parts[0].capitalize() if parts else domain
+    except Exception:
+        return ""
