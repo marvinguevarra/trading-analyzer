@@ -394,7 +394,7 @@ async def config_tiers():
     Single source of truth — frontend fetches this on load to populate
     tier selectors, pricing cards, and feature comparisons.
     """
-    return {"tiers": list_tiers_detailed()}
+    return list_tiers_detailed()
 
 
 @app.post("/analyze/full")

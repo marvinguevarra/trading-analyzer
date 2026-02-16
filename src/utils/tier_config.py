@@ -155,7 +155,7 @@ def list_tiers_detailed() -> list[dict]:
     for tier_id, cfg in TIER_CONFIGS.items():
         tiers.append({
             "id": tier_id,
-            "name": cfg["label"],
+            "label": cfg["label"],
             "description": cfg["description"],
             "use_case": cfg["use_case"],
             "price_display": cfg["price_display"],
