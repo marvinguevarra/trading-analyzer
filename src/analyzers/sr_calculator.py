@@ -43,11 +43,17 @@ class SRLevel:
 
     @property
     def strength_label(self) -> str:
-        if self.strength_score >= 70:
+        """Classify strength by touch count (intuitive for traders)."""
+        if self.touches >= 6:
             return "strong"
-        elif self.strength_score >= 40:
+        elif self.touches >= 3:
             return "moderate"
         return "weak"
+
+    @property
+    def label(self) -> str:
+        """Human-readable label like 'Strong (10 touches)'."""
+        return f"{self.strength_label.capitalize()} ({self.touches} touches)"
 
     @property
     def days_since_test(self) -> Optional[int]:
@@ -82,6 +88,7 @@ class SRLevel:
                 else str(self.last_test_date) if self.last_test_date else None
             ),
             "days_since_test": days,
+            "label": self.label,
             "zone": [round(self.zone_low, 2), round(self.zone_high, 2)],
         }
 
@@ -479,9 +486,8 @@ def summarize_levels(levels: list[SRLevel], current_price: float) -> dict:
         "explanation": (
             "Support levels show where price historically found buying pressure. "
             "Resistance levels show where selling pressure emerged. "
-            "More touches = stronger level. "
-            "Strong (70+): very likely to hold. "
-            "Moderate (40-69): may hold but watch for breaks. "
-            "Weak (<40): could break easily."
+            "Strong (6+ touches): well-tested level, likely to hold. "
+            "Moderate (3-5 touches): established level, watch for reaction. "
+            "Weak (1-2 touches): untested level, may break easily."
         ),
     }
