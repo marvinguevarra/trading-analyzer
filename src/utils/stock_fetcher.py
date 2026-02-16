@@ -14,17 +14,20 @@ from src.utils.logger import get_logger
 logger = get_logger("stock_fetcher")
 
 VALID_PERIODS = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
+VALID_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d", "1wk", "1mo"]
 
 
 def fetch_stock_data(
-    ticker: str, period: str = "1mo"
+    ticker: str, period: str = "1mo", interval: str = "1d"
 ) -> Optional[pd.DataFrame]:
     """Fetch historical stock data using yfinance.
 
     Args:
         ticker: Stock symbol (e.g., "AAPL", "MSFT").
-        period: Time period — valid values:
+        period: Lookback period — valid values:
                 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
+        interval: Candle size — valid values:
+                  1m, 5m, 15m, 1h, 4h, 1d, 1wk, 1mo
 
     Returns:
         DataFrame with columns: date, open, high, low, close, volume.
@@ -36,12 +39,19 @@ def fetch_stock_data(
         logger.warning(f"Invalid period '{period}', defaulting to '1mo'")
         period = "1mo"
 
+    if interval not in VALID_INTERVALS:
+        logger.warning(f"Invalid interval '{interval}', defaulting to '1d'")
+        interval = "1d"
+
     try:
         stock = yf.Ticker(ticker)
-        df = stock.history(period=period)
+        df = stock.history(period=period, interval=interval)
 
         if df.empty:
-            logger.warning(f"No data returned for {ticker} (period={period})")
+            logger.warning(
+                f"No data returned for {ticker} "
+                f"(period={period}, interval={interval})"
+            )
             return None
 
         # Normalize: reset index to get Date as column
@@ -89,6 +99,7 @@ def fetch_stock_data(
 
         logger.info(
             f"Fetched {ticker}: {len(df)} bars | "
+            f"period={period} interval={interval} | "
             f"{df['date'].iloc[0].strftime('%Y-%m-%d')} to "
             f"{df['date'].iloc[-1].strftime('%Y-%m-%d')}"
         )

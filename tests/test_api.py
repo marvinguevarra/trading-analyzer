@@ -228,14 +228,15 @@ async def test_analyze_full_ticker_mode(mock_fetch, client):
         data={
             "mode": "ticker",
             "ticker": "AAPL",
-            "timeframe": "1mo",
+            "period": "1mo",
+            "interval": "1d",
             "tier": "lite",
             "force_fresh": "true",
         },
     )
     # Accept 200 or 500 (API key missing for AI agents)
     assert resp.status_code in (200, 500)
-    mock_fetch.assert_called_once_with("AAPL", period="1mo")
+    mock_fetch.assert_called_once_with("AAPL", period="1mo", interval="1d")
 
 
 @pytest.mark.asyncio
@@ -269,14 +270,29 @@ async def test_analyze_full_ticker_mode_long_ticker(client):
 
 
 @pytest.mark.asyncio
-async def test_analyze_full_ticker_mode_bad_timeframe(client):
-    """Ticker mode with invalid timeframe should return 400."""
+async def test_analyze_full_ticker_mode_bad_period(client):
+    """Ticker mode with invalid period should return 400."""
     resp = await client.post(
         "/analyze/full",
         data={
             "mode": "ticker",
             "ticker": "AAPL",
-            "timeframe": "99x",
+            "period": "99x",
+            "tier": "lite",
+        },
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_analyze_full_ticker_mode_bad_interval(client):
+    """Ticker mode with invalid interval should return 400."""
+    resp = await client.post(
+        "/analyze/full",
+        data={
+            "mode": "ticker",
+            "ticker": "AAPL",
+            "interval": "99x",
             "tier": "lite",
         },
     )
@@ -290,7 +306,7 @@ async def test_analyze_full_ticker_no_data(mock_fetch, client):
     mock_fetch.return_value = None
     resp = await client.post(
         "/analyze/full",
-        data={"mode": "ticker", "ticker": "ZZZZZ", "timeframe": "1mo", "tier": "lite"},
+        data={"mode": "ticker", "ticker": "ZZZZZ", "period": "1mo", "tier": "lite"},
     )
     assert resp.status_code == 400
 

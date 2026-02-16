@@ -91,7 +91,8 @@ def _parse_upload(file_bytes: bytes, filename: str) -> ParsedData:
 
 # ── Validation helpers ───────────────────────────────────────
 
-VALID_TIMEFRAMES = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y"]
+VALID_PERIODS = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y"]
+VALID_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d", "1wk", "1mo"]
 
 
 def _validate_ticker(ticker: Optional[str]) -> str:
@@ -106,15 +107,26 @@ def _validate_ticker(ticker: Optional[str]) -> str:
     return ticker
 
 
-def _validate_timeframe(timeframe: str) -> str:
-    """Validate timeframe string."""
-    if timeframe not in VALID_TIMEFRAMES:
+def _validate_period(period: str) -> str:
+    """Validate lookback period string."""
+    if period not in VALID_PERIODS:
         raise HTTPException(
             400,
-            f"Invalid timeframe '{timeframe}'. "
-            f"Use: {', '.join(VALID_TIMEFRAMES)}",
+            f"Invalid period '{period}'. "
+            f"Use: {', '.join(VALID_PERIODS)}",
         )
-    return timeframe
+    return period
+
+
+def _validate_interval(interval: str) -> str:
+    """Validate candle interval string."""
+    if interval not in VALID_INTERVALS:
+        raise HTTPException(
+            400,
+            f"Invalid interval '{interval}'. "
+            f"Use: {', '.join(VALID_INTERVALS)}",
+        )
+    return interval
 
 
 def _df_to_parsed(
@@ -387,7 +399,8 @@ async def config_tiers():
 async def analyze_full(
     mode: str = Form("csv"),
     ticker: Optional[str] = Form(None),
-    timeframe: str = Form("1mo"),
+    period: Optional[str] = Form(None),
+    interval: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     symbol: Optional[str] = Form(None),
     tier: str = Form("standard"),
@@ -398,7 +411,8 @@ async def analyze_full(
     """Run full AI-powered analysis in two modes.
 
     **Mode 1: ticker** — Fetch data via yfinance.
-        Required: ticker (e.g., AAPL). Optional: timeframe (default 1mo).
+        Required: ticker (e.g., AAPL).
+        Optional: period (lookback, default 1mo), interval (candle size, default 1d).
 
     **Mode 2: csv** — Parse an uploaded CSV file.
         Required: file (CSV upload). Supports TradingView, Yahoo Finance,
@@ -414,10 +428,13 @@ async def analyze_full(
     # ── Ticker mode ──────────────────────────────────────────
     if mode == "ticker":
         clean_ticker = _validate_ticker(ticker)
-        timeframe = _validate_timeframe(timeframe)
+        effective_period = _validate_period(period or "1mo")
+        effective_interval = _validate_interval(interval or "1d")
 
         t_fetch = _time.time()
-        df = fetch_stock_data(clean_ticker, period=timeframe)
+        df = fetch_stock_data(
+            clean_ticker, period=effective_period, interval=effective_interval
+        )
         fetch_elapsed = round(_time.time() - t_fetch, 2)
         logger.info(f"TIMING yfinance fetch: {fetch_elapsed}s")
 
@@ -435,7 +452,9 @@ async def analyze_full(
                 f"(got {len(df)} rows, need at least 5).",
             )
 
-        parsed = _df_to_parsed(df, symbol=clean_ticker, timeframe=timeframe)
+        parsed = _df_to_parsed(
+            df, symbol=clean_ticker, timeframe=effective_interval
+        )
         effective_symbol = clean_ticker
 
     # ── CSV mode ─────────────────────────────────────────────

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from src.utils.stock_fetcher import VALID_PERIODS, fetch_stock_data
+from src.utils.stock_fetcher import VALID_INTERVALS, VALID_PERIODS, fetch_stock_data
 
 
 def _make_yf_df(rows: int = 20) -> pd.DataFrame:
@@ -118,12 +118,35 @@ class TestFetchStockData:
         mock_ticker_cls.return_value = mock_ticker
 
         fetch_stock_data("AAPL", period="invalid")
-        mock_ticker.history.assert_called_with(period="1mo")
+        mock_ticker.history.assert_called_with(period="1mo", interval="1d")
+
+    @patch("src.utils.stock_fetcher.yf.Ticker")
+    def test_invalid_interval_defaults(self, mock_ticker_cls):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = _make_yf_df()
+        mock_ticker_cls.return_value = mock_ticker
+
+        fetch_stock_data("AAPL", interval="invalid")
+        mock_ticker.history.assert_called_with(period="1mo", interval="1d")
+
+    @patch("src.utils.stock_fetcher.yf.Ticker")
+    def test_interval_passed_to_yfinance(self, mock_ticker_cls):
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = _make_yf_df()
+        mock_ticker_cls.return_value = mock_ticker
+
+        fetch_stock_data("AAPL", period="3mo", interval="1h")
+        mock_ticker.history.assert_called_with(period="3mo", interval="1h")
 
     def test_valid_periods_constant(self):
         assert "1mo" in VALID_PERIODS
         assert "1y" in VALID_PERIODS
         assert "max" in VALID_PERIODS
+
+    def test_valid_intervals_constant(self):
+        assert "1d" in VALID_INTERVALS
+        assert "1h" in VALID_INTERVALS
+        assert "1wk" in VALID_INTERVALS
 
     @patch("src.utils.stock_fetcher.yf.Ticker")
     def test_numeric_dtypes(self, mock_ticker_cls):
