@@ -20,9 +20,12 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from src.parsers.csv_parser import DataQuality, ParsedData, load_csv, _assess_quality
 from src.utils.logger import get_logger
@@ -37,15 +40,26 @@ from src.utils.csv_parser import auto_detect_csv
 from src.utils.stock_fetcher import fetch_stock_data
 from src.utils.tier_config import list_tiers, list_tiers_detailed
 
+limiter = Limiter(
+    key_func=get_remote_address,
+    enabled=os.environ.get("RATE_LIMIT_ENABLED", "true").lower() != "false",
+)
+
 app = FastAPI(
     title="Trading Analyzer API",
     description="Multi-asset trading analysis — gaps, S/R levels, supply/demand zones. No fake percentages.",
     version="0.1.0",
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+_default_origins = ["http://localhost:5173", "http://localhost:3000"]
+_origins = os.environ.get("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _origins.split(",") if o.strip()] or _default_origins
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -252,7 +266,9 @@ async def health():
 
 
 @app.post("/analyze")
+@limiter.limit("30/minute")
 async def analyze(
+    request: Request,
     file: UploadFile = File(...),
     min_gap_pct: float = Query(2.0, ge=0, le=50, description="Min gap size %"),
 ):
@@ -357,7 +373,9 @@ async def config_tiers():
 
 
 @app.post("/analyze/full")
+@limiter.limit("10/minute")
 async def analyze_full(
+    request: Request,
     mode: str = Form("csv"),
     ticker: Optional[str] = Form(None),
     period: Optional[str] = Form(None),
@@ -548,15 +566,26 @@ async def cache_stats():
     return cache.stats()
 
 
+def _require_admin(secret: Optional[str]) -> None:
+    """Verify X-Admin-Secret header matches ADMIN_SECRET env var."""
+    expected = os.environ.get("ADMIN_SECRET", "")
+    if not expected:
+        raise HTTPException(401, "ADMIN_SECRET not configured on server")
+    if not secret or secret != expected:
+        raise HTTPException(401, "Invalid or missing X-Admin-Secret header")
+
+
 @app.delete("/cache")
-async def clear_all_cache():
-    """Clear entire cache."""
+async def clear_all_cache(x_admin_secret: Optional[str] = Header(None)):
+    """Clear entire cache. Requires X-Admin-Secret header."""
+    _require_admin(x_admin_secret)
     count = cache.clear()
     return {"cleared": count}
 
 
 @app.delete("/cache/{symbol}")
-async def clear_symbol_cache(symbol: str):
-    """Clear cache for a specific symbol."""
+async def clear_symbol_cache(symbol: str, x_admin_secret: Optional[str] = Header(None)):
+    """Clear cache for a specific symbol. Requires X-Admin-Secret header."""
+    _require_admin(x_admin_secret)
     count = cache.clear(symbol)
     return {"cleared": count, "symbol": symbol.upper()}

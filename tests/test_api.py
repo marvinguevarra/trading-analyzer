@@ -1,5 +1,6 @@
 """Tests for the FastAPI backend."""
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -7,6 +8,9 @@ import pandas as pd
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+
+# Disable rate limiting during tests
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 from api import app
 
