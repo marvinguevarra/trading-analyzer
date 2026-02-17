@@ -138,6 +138,10 @@ def _parse_dataframe(df: pd.DataFrame, filename_stem: str) -> ParsedData:
     # Normalize columns
     df = _normalize_columns(df)
 
+    # Sanitize column names and cell values (security — before AI agents see data)
+    from src.utils.sanitize import sanitize_dataframe
+    df = sanitize_dataframe(df)
+
     # Validate required columns
     _validate_required_columns(df)
 

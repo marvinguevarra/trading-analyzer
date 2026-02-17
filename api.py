@@ -37,6 +37,7 @@ from src.analyzers.supply_demand import identify_zones, summarize_zones
 from src.orchestrator import TradingAnalysisOrchestrator
 from src.utils.cache import AnalysisCache
 from src.utils.csv_parser import auto_detect_csv
+from src.utils.sanitize import sanitize_ticker
 from src.utils.stock_fetcher import fetch_stock_data
 from src.utils.tier_config import list_tiers, list_tiers_detailed
 
@@ -111,14 +112,15 @@ VALID_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d", "1wk", "1mo"]
 
 def _validate_ticker(ticker: Optional[str]) -> str:
     """Validate and normalize a ticker symbol. Returns uppercased ticker."""
-    import re
     if not ticker or not ticker.strip():
         raise HTTPException(400, "Ticker is required for ticker mode")
-    ticker = ticker.strip().upper()
-    if not re.match(r'^[A-Z0-9.]{1,6}$', ticker):
+    ticker = sanitize_ticker(ticker.strip())
+    if not ticker:
+        raise HTTPException(400, "Ticker contains no valid characters")
+    if not re.match(r'^[A-Z.]{1,10}$', ticker):
         raise HTTPException(
             400,
-            "Ticker must be 1-6 characters: letters, digits, or dots (e.g. AAPL, BRK.B)",
+            "Ticker must be 1-10 characters: letters or dots (e.g. AAPL, BRK.B)",
         )
     return ticker
 
@@ -472,19 +474,9 @@ async def analyze_full(
 
         # Extract ticker from explicit param or filename
         if symbol and symbol.strip():
-            csv_ticker = symbol.strip().upper()
+            csv_ticker = sanitize_ticker(symbol.strip())
         else:
-            csv_ticker = _extract_symbol(Path(file.filename).stem)
-
-        if not csv_ticker:
-            raise HTTPException(
-                400,
-                "Could not determine ticker from filename. "
-                "Please provide the 'symbol' parameter (e.g. symbol=AAPL).",
-            )
-
-        # Sanitize: letters and dots only, max 10 chars
-        csv_ticker = re.sub(r'[^A-Za-z.]', '', csv_ticker).upper()[:10]
+            csv_ticker = sanitize_ticker(_extract_symbol(Path(file.filename).stem))
 
         if not csv_ticker:
             raise HTTPException(

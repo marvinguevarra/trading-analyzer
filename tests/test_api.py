@@ -255,20 +255,20 @@ async def test_analyze_full_ticker_mode_missing_ticker(client):
 
 @pytest.mark.asyncio
 async def test_analyze_full_ticker_mode_invalid_ticker(client):
-    """Ticker mode with special characters should return 400."""
+    """Ticker mode with only special characters should return 400."""
     resp = await client.post(
         "/analyze/full",
-        data={"mode": "ticker", "ticker": "AA$L", "tier": "lite"},
+        data={"mode": "ticker", "ticker": "!@#$%", "tier": "lite"},
     )
     assert resp.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_analyze_full_ticker_mode_long_ticker(client):
-    """Ticker mode with >6 char ticker should return 400."""
+    """Ticker mode with >10 char ticker (after sanitization) should return 400."""
     resp = await client.post(
         "/analyze/full",
-        data={"mode": "ticker", "ticker": "ABCDEFGH", "tier": "lite"},
+        data={"mode": "ticker", "ticker": "ABCDEFGHIJK", "tier": "lite"},
     )
     assert resp.status_code == 400
 
