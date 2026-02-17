@@ -385,6 +385,7 @@ async def analyze_full(
     tier: str = Form("standard"),
     format: str = Form("json"),
     min_gap_pct: float = Form(2.0),
+    filing_period: str = Form("annual"),
     force_fresh: bool = Form(False),
 ):
     """Run full AI-powered analysis in two modes.
@@ -503,10 +504,14 @@ async def analyze_full(
     try:
         t_orch = _time.time()
         orchestrator = TradingAnalysisOrchestrator(tier=tier)
+        valid_periods = ("annual", "quarterly")
+        if filing_period not in valid_periods:
+            filing_period = "annual"
         result = orchestrator.analyze_from_parsed(
             symbol=effective_symbol,
             parsed=parsed,
             min_gap_pct=min_gap_pct,
+            filing_period=filing_period,
         )
         orch_elapsed = round(_time.time() - t_orch, 2)
         total_elapsed = round(_time.time() - endpoint_start, 2)

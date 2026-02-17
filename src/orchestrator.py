@@ -162,6 +162,7 @@ class TradingAnalysisOrchestrator:
         parsed: ParsedData,
         min_gap_pct: float = 2.0,
         news_lookback_days: int = 7,
+        filing_period: str = "annual",
     ) -> dict:
         """Run analysis from an already-parsed CSV (for API endpoint use).
 
@@ -170,6 +171,7 @@ class TradingAnalysisOrchestrator:
             parsed: Pre-parsed CSV data.
             min_gap_pct: Minimum gap size percentage.
             news_lookback_days: Days to look back for news.
+            filing_period: "annual" or "quarterly" for SEC filings.
 
         Returns:
             Complete analysis dict.
@@ -211,7 +213,7 @@ class TradingAnalysisOrchestrator:
 
         if self._fundamental_agent:
             t = time.time()
-            self._step_fundamental_analysis(symbol, result)
+            self._step_fundamental_analysis(symbol, result, filing_period)
             timings["fundamental_s"] = round(time.time() - t, 2)
             logger.info(f"TIMING fundamental: {timings['fundamental_s']}s")
 
@@ -329,17 +331,20 @@ class TradingAnalysisOrchestrator:
             logger.warning(error_msg)
             result["errors"].append(error_msg)
 
-    def _step_fundamental_analysis(self, symbol: str, result: dict) -> None:
+    def _step_fundamental_analysis(
+        self, symbol: str, result: dict, filing_period: str = "annual"
+    ) -> None:
         """Step 4: Fundamental analysis via Sonnet.
 
         Args:
             symbol: Stock ticker symbol.
             result: Result dict to update.
+            filing_period: "annual" or "quarterly".
         """
-        logger.info(f"Step 4: Analyzing SEC filings for {symbol}")
+        logger.info(f"Step 4: Analyzing SEC filings for {symbol} ({filing_period})")
         try:
             fundamental = self._fundamental_agent.analyze(  # type: ignore[union-attr]
-                symbol=symbol, filing_type="10-K"
+                symbol=symbol, filing_period=filing_period
             )
             result["fundamental"] = fundamental
             logger.info(

@@ -409,3 +409,60 @@ def fetch_filing_by_type(
         max_text_length=max_text_length,
     )
     return filings[0] if filings else None
+
+
+def fetch_filing_parallel(
+    symbol: str,
+    filing_period: str = "annual",
+    max_text_length: int = 100_000,
+) -> Optional[dict]:
+    """Fetch the most recent filing, trying both US and foreign types in parallel.
+
+    US companies file 10-K (annual) / 10-Q (quarterly).
+    Foreign companies file 20-F (annual) / 6-K (quarterly).
+    This fetches both in parallel and returns whichever exists.
+
+    Args:
+        symbol: Stock ticker symbol (e.g., "AAPL", "BABA").
+        filing_period: "annual" or "quarterly".
+        max_text_length: Maximum text characters to extract.
+
+    Returns:
+        Filing dict, or None if neither type found.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    if filing_period == "quarterly":
+        us_type, foreign_type = "10-Q", "6-K"
+    else:
+        us_type, foreign_type = "10-K", "20-F"
+
+    logger.info(
+        f"{symbol}: Fetching {filing_period} filing "
+        f"(trying {us_type} and {foreign_type} in parallel)"
+    )
+
+    def _try_fetch(filing_type: str) -> Optional[dict]:
+        try:
+            return fetch_filing_by_type(symbol, filing_type, max_text_length)
+        except Exception as e:
+            logger.debug(f"{symbol}: {filing_type} fetch failed: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        us_future = executor.submit(_try_fetch, us_type)
+        foreign_future = executor.submit(_try_fetch, foreign_type)
+
+        us_result = us_future.result()
+        foreign_result = foreign_future.result()
+
+    # Prefer US filing if both exist (more standardized format)
+    if us_result and us_result.get("text_content"):
+        logger.info(f"{symbol}: Using {us_type} (US filing)")
+        return us_result
+    elif foreign_result and foreign_result.get("text_content"):
+        logger.info(f"{symbol}: Using {foreign_type} (foreign filing)")
+        return foreign_result
+    else:
+        logger.warning(f"{symbol}: No {us_type} or {foreign_type} filing found")
+        return None

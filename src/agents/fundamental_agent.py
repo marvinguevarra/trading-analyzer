@@ -13,7 +13,7 @@ from typing import Optional
 from src.agents.model_wrappers import SonnetWrapper, get_wrapper
 from src.utils.cost_tracker import CostTracker
 from src.utils.logger import get_logger
-from src.utils.sec_fetcher import fetch_latest_filings, fetch_filing_by_type
+from src.utils.sec_fetcher import fetch_latest_filings, fetch_filing_by_type, fetch_filing_parallel
 
 logger = get_logger("fundamental_agent")
 
@@ -89,33 +89,46 @@ class FundamentalAgent:
         self,
         symbol: str,
         filing_type: str = "10-K",
+        filing_period: Optional[str] = None,
     ) -> dict:
         """Analyze SEC filings for a stock symbol.
 
-        Fetches the most recent filing of the specified type and sends
-        it to Sonnet for analysis.
+        Fetches the most recent filing and sends it to Sonnet for analysis.
+        When filing_period is set, fetches both US and foreign filing types
+        in parallel (10-K/20-F or 10-Q/6-K) to support international companies.
 
         Args:
-            symbol: Stock ticker symbol (e.g., "WHR").
-            filing_type: Filing type to analyze (default "10-K").
+            symbol: Stock ticker symbol (e.g., "WHR", "BABA").
+            filing_type: Filing type to analyze (default "10-K"). Ignored
+                when filing_period is set.
+            filing_period: "annual" or "quarterly". When set, uses parallel
+                fetch to try both US and foreign filing types.
 
         Returns:
             Dict with keys: financial_health, key_risks, opportunities,
             management_commentary, key_metrics, competitive_position,
             filing_info, cost.
         """
-        logger.info(f"Starting fundamental analysis for {symbol} ({filing_type})")
-
-        # Step 1: Fetch the filing
-        filing = fetch_filing_by_type(
-            symbol=symbol,
-            filing_type=filing_type,
-            max_text_length=self.max_filing_chars,
-        )
+        if filing_period:
+            logger.info(f"Starting fundamental analysis for {symbol} ({filing_period})")
+            filing = fetch_filing_parallel(
+                symbol=symbol,
+                filing_period=filing_period,
+                max_text_length=self.max_filing_chars,
+            )
+            label = filing_period
+        else:
+            logger.info(f"Starting fundamental analysis for {symbol} ({filing_type})")
+            filing = fetch_filing_by_type(
+                symbol=symbol,
+                filing_type=filing_type,
+                max_text_length=self.max_filing_chars,
+            )
+            label = filing_type
 
         if filing is None:
-            logger.warning(f"No {filing_type} filing found for {symbol}")
-            return self._empty_result(symbol, filing_type)
+            logger.warning(f"No {label} filing found for {symbol}")
+            return self._empty_result(symbol, label)
 
         if not filing.get("text_content"):
             logger.warning(f"Filing found but text content is empty for {symbol}")
