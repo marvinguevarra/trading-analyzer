@@ -17,6 +17,7 @@ rich>=13.7.0
 
 # Data sources
 yfinance>=0.2.36
+supabase>=2.0.0
 
 # Web framework
 fastapi>=0.115.0

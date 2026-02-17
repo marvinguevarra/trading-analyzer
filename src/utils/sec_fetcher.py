@@ -437,6 +437,14 @@ def fetch_filing_parallel(
     else:
         us_type, foreign_type = "10-K", "20-F"
 
+    # Check L1 cache first for either filing type
+    from src.utils.supabase_cache import get_cached_filing
+    for ft in (us_type, foreign_type):
+        cached = get_cached_filing(symbol, ft)
+        if cached and cached.get("text_content"):
+            logger.info(f"{symbol}: Using cached {ft} filing")
+            return cached
+
     logger.info(
         f"{symbol}: Fetching {filing_period} filing "
         f"(trying {us_type} and {foreign_type} in parallel)"

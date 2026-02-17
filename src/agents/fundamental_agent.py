@@ -14,6 +14,10 @@ from src.agents.model_wrappers import SonnetWrapper, get_wrapper
 from src.utils.cost_tracker import CostTracker
 from src.utils.logger import get_logger
 from src.utils.sec_fetcher import fetch_latest_filings, fetch_filing_by_type, fetch_filing_parallel
+from src.utils.supabase_cache import (
+    get_cached_analysis, save_analysis,
+    get_cached_filing, save_filing,
+)
 
 logger = get_logger("fundamental_agent")
 
@@ -109,6 +113,19 @@ class FundamentalAgent:
             management_commentary, key_metrics, competitive_position,
             filing_info, cost.
         """
+        label = filing_period or filing_type
+
+        # ── L2 cache check: return cached analysis if fresh ──
+        if filing_period:
+            cached = get_cached_analysis(symbol, filing_period)
+            if cached:
+                logger.info(f"Using cached analysis for {symbol} ({filing_period})")
+                cached["cost"] = 0.0
+                cached["input_tokens"] = 0
+                cached["output_tokens"] = 0
+                return cached
+
+        # ── Fetch filing (L1 cache → SEC) ────────────────────
         if filing_period:
             logger.info(f"Starting fundamental analysis for {symbol} ({filing_period})")
             filing = fetch_filing_parallel(
@@ -116,7 +133,6 @@ class FundamentalAgent:
                 filing_period=filing_period,
                 max_text_length=self.max_filing_chars,
             )
-            label = filing_period
         else:
             logger.info(f"Starting fundamental analysis for {symbol} ({filing_type})")
             filing = fetch_filing_by_type(
@@ -124,7 +140,6 @@ class FundamentalAgent:
                 filing_type=filing_type,
                 max_text_length=self.max_filing_chars,
             )
-            label = filing_type
 
         if filing is None:
             logger.warning(f"No {label} filing found for {symbol}")
@@ -132,17 +147,20 @@ class FundamentalAgent:
 
         if not filing.get("text_content"):
             logger.warning(f"Filing found but text content is empty for {symbol}")
-            return self._empty_result(symbol, filing_type)
+            return self._empty_result(symbol, label)
+
+        # Cache the filing for next time (L1)
+        if not filing.get("_cached"):
+            save_filing(symbol, filing)
 
         logger.info(
-            f"Retrieved {filing_type} for {symbol}: "
-            f"{len(filing['text_content']):,} chars, dated {filing['date']}"
+            f"Retrieved {filing.get('filing_type', label)} for {symbol}: "
+            f"{len(filing['text_content']):,} chars, dated {filing.get('date', 'unknown')}"
         )
 
-        # Step 2: Build prompt
+        # ── Analyze with Claude (expensive step) ─────────────
         prompt = self._build_prompt(symbol, filing)
 
-        # Step 3: Send to Sonnet
         result = self.sonnet.call(
             prompt=prompt,
             system=FUNDAMENTAL_SYSTEM_PROMPT,
@@ -151,7 +169,6 @@ class FundamentalAgent:
             component="fundamental_agent",
         )
 
-        # Step 4: Parse response
         analysis = self._parse_response(result["text"])
         analysis["symbol"] = symbol
         analysis["filing_info"] = {
@@ -164,6 +181,10 @@ class FundamentalAgent:
         analysis["cost"] = result["cost"]
         analysis["input_tokens"] = result["input_tokens"]
         analysis["output_tokens"] = result["output_tokens"]
+
+        # Cache the analysis for next time (L2)
+        if filing_period:
+            save_analysis(symbol, filing_period, analysis)
 
         logger.info(
             f"Fundamental analysis complete for {symbol}: "
