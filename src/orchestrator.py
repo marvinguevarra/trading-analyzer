@@ -9,6 +9,7 @@ Uses Evidence Scorecard + Checklist Method (NO fake percentages).
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -132,15 +133,10 @@ class TradingAnalysisOrchestrator:
         # Step 2: Technical analysis (always runs, no API cost)
         self._step_technical_analysis(parsed, min_gap_pct, result)
 
-        # Step 3: News analysis
-        if self._news_agent:
-            self._step_news_analysis(symbol, news_lookback_days, result)
+        # Steps 3+4: News + Fundamental run in PARALLEL (independent)
+        self._run_parallel_agents(symbol, news_lookback_days, result)
 
-        # Step 4: Fundamental analysis (SEC filings)
-        if self._fundamental_agent:
-            self._step_fundamental_analysis(symbol, result)
-
-        # Step 5: Synthesis
+        # Step 5: Synthesis runs AFTER both complete (needs their results)
         if self._synthesis_agent:
             self._step_synthesis(symbol, result)
 
@@ -205,18 +201,16 @@ class TradingAnalysisOrchestrator:
         timings["technical_s"] = round(time.time() - t, 2)
         logger.info(f"TIMING technical: {timings['technical_s']}s")
 
-        if self._news_agent:
-            t = time.time()
-            self._step_news_analysis(symbol, news_lookback_days, result)
-            timings["news_s"] = round(time.time() - t, 2)
-            logger.info(f"TIMING news: {timings['news_s']}s")
+        # News + Fundamental run in PARALLEL (independent API calls)
+        t = time.time()
+        self._run_parallel_agents(
+            symbol, news_lookback_days, result, filing_period
+        )
+        parallel_elapsed = round(time.time() - t, 2)
+        timings["parallel_news_fundamental_s"] = parallel_elapsed
+        logger.info(f"TIMING parallel news+fundamental: {parallel_elapsed}s")
 
-        if self._fundamental_agent:
-            t = time.time()
-            self._step_fundamental_analysis(symbol, result, filing_period)
-            timings["fundamental_s"] = round(time.time() - t, 2)
-            logger.info(f"TIMING fundamental: {timings['fundamental_s']}s")
-
+        # Synthesis runs AFTER both complete (needs their results)
         if self._synthesis_agent:
             t = time.time()
             self._step_synthesis(symbol, result)
@@ -380,6 +374,44 @@ class TradingAnalysisOrchestrator:
             error_msg = f"Synthesis failed: {e}"
             logger.warning(error_msg)
             result["errors"].append(error_msg)
+
+    def _run_parallel_agents(
+        self,
+        symbol: str,
+        news_lookback_days: int,
+        result: dict,
+        filing_period: str = "annual",
+    ) -> None:
+        """Run news and fundamental agents in parallel using threads.
+
+        Each agent writes to a separate key in the result dict, so
+        concurrent access is safe. Exceptions are caught per-future
+        and logged to result["errors"].
+
+        Args:
+            symbol: Stock ticker symbol.
+            news_lookback_days: Days to look back for news.
+            result: Result dict to update (thread-safe: separate keys).
+            filing_period: "annual" or "quarterly" for SEC filings.
+        """
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {}
+            if self._news_agent:
+                futures[executor.submit(
+                    self._step_news_analysis, symbol, news_lookback_days, result
+                )] = "news"
+            if self._fundamental_agent:
+                futures[executor.submit(
+                    self._step_fundamental_analysis, symbol, result, filing_period
+                )] = "fundamental"
+
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Parallel {name} failed: {e}")
+                    result["errors"].append(f"{name} analysis failed: {e}")
 
     # ── Helpers ───────────────────────────────────────────────
 
