@@ -27,7 +27,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from src.parsers.csv_parser import DataQuality, ParsedData, load_csv, _assess_quality
+from src.parsers.csv_parser import DataQuality, ParsedData, load_csv, _assess_quality, _extract_symbol
 from src.utils.logger import get_logger
 
 logger = get_logger("api")
@@ -470,11 +470,29 @@ async def analyze_full(
                 f"Not enough data (got {len(df)} rows, need at least 5).",
             )
 
-        # Extract ticker from filename or explicit symbol param
-        csv_ticker = (
-            symbol
-            or file.filename.replace(".csv", "").replace(".CSV", "").split("_")[0].upper()
-        )
+        # Extract ticker from explicit param or filename
+        if symbol and symbol.strip():
+            csv_ticker = symbol.strip().upper()
+        else:
+            csv_ticker = _extract_symbol(Path(file.filename).stem)
+
+        if not csv_ticker:
+            raise HTTPException(
+                400,
+                "Could not determine ticker from filename. "
+                "Please provide the 'symbol' parameter (e.g. symbol=AAPL).",
+            )
+
+        # Sanitize: letters and dots only, max 10 chars
+        csv_ticker = re.sub(r'[^A-Za-z.]', '', csv_ticker).upper()[:10]
+
+        if not csv_ticker:
+            raise HTTPException(
+                400,
+                "Could not determine ticker from filename. "
+                "Please provide the 'symbol' parameter (e.g. symbol=AAPL).",
+            )
+
         parsed = _df_to_parsed(df, symbol=csv_ticker)
         effective_symbol = csv_ticker
 
