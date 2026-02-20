@@ -17,9 +17,14 @@ from src.agents.fundamental_agent import FundamentalAgent
 from src.agents.news_agent import NewsAgent
 from src.agents.synthesis_agent import SynthesisAgent
 from src.analyzers.gap_analyzer import detect_gaps, summarize_gaps
-from src.analyzers.sr_calculator import calculate_levels, summarize_levels
+from src.analyzers.sr_calculator import (
+    calculate_levels,
+    detect_confluence,
+    summarize_levels,
+)
 from src.analyzers.supply_demand import identify_zones, summarize_zones
 from src.parsers.csv_parser import ParsedData, load_csv
+from src.utils.yfinance_fetcher import fetch_sr_timeframes
 from src.utils.cost_tracker import CostTracker
 from src.utils.logger import get_logger
 from src.utils.tier_config import get_tier_config
@@ -131,7 +136,7 @@ class TradingAnalysisOrchestrator:
             return result
 
         # Step 2: Technical analysis (always runs, no API cost)
-        self._step_technical_analysis(parsed, min_gap_pct, result)
+        self._step_technical_analysis(parsed, min_gap_pct, result, symbol=symbol)
 
         # Steps 3+4: News + Fundamental run in PARALLEL (independent)
         self._run_parallel_agents(symbol, news_lookback_days, result)
@@ -197,7 +202,7 @@ class TradingAnalysisOrchestrator:
         }
 
         t = time.time()
-        self._step_technical_analysis(parsed, min_gap_pct, result)
+        self._step_technical_analysis(parsed, min_gap_pct, result, symbol=symbol)
         timings["technical_s"] = round(time.time() - t, 2)
         logger.info(f"TIMING technical: {timings['technical_s']}s")
 
@@ -263,14 +268,24 @@ class TradingAnalysisOrchestrator:
             return None
 
     def _step_technical_analysis(
-        self, parsed: ParsedData, min_gap_pct: float, result: dict
+        self,
+        parsed: ParsedData,
+        min_gap_pct: float,
+        result: dict,
+        symbol: str = "",
     ) -> None:
         """Step 2: Run technical analysis (no API cost).
+
+        Runs multi-timeframe S/R when a symbol is available: the user's
+        timeframe plus daily (3 months) and weekly (6 months) candles.
+        Levels that appear across multiple timeframes are flagged as
+        confluence and promoted to key levels.
 
         Args:
             parsed: Parsed CSV data.
             min_gap_pct: Minimum gap percentage.
             result: Result dict to update.
+            symbol: Ticker symbol for fetching additional timeframes.
         """
         logger.info("Step 2: Running technical analysis")
         try:
@@ -278,21 +293,80 @@ class TradingAnalysisOrchestrator:
             current_price = float(df["close"].iloc[-1])
 
             gaps = detect_gaps(df, min_gap_pct=min_gap_pct)
-            levels = calculate_levels(df, current_price=current_price)
             zones = identify_zones(df)
+
+            # ── Multi-timeframe S/R ────────────────────────────────
+            user_tf = parsed.timeframe or ""
+            all_levels = calculate_levels(
+                df,
+                current_price=current_price,
+                lookback_bars=len(df),
+                timeframe_label=user_tf,
+            )
+            timeframes_analyzed = [user_tf] if user_tf else []
+            lookback_periods: dict[str, str] = {}
+            if user_tf:
+                lookback_periods[user_tf] = f"{len(df)} bars"
+
+            # Fetch daily + weekly data if we have a symbol
+            if symbol:
+                try:
+                    extra = fetch_sr_timeframes(symbol)
+                except Exception as e:
+                    logger.warning(f"Multi-TF fetch failed: {e}")
+                    extra = {}
+
+                daily_df = extra.get("daily")
+                if daily_df is not None and not daily_df.empty:
+                    daily_levels = calculate_levels(
+                        daily_df,
+                        current_price=current_price,
+                        lookback_bars=63,
+                        timeframe_label="daily",
+                    )
+                    all_levels.extend(daily_levels)
+                    timeframes_analyzed.append("daily")
+                    lookback_periods["daily"] = (
+                        f"3 months ({len(daily_df)} bars)"
+                    )
+
+                weekly_df = extra.get("weekly")
+                if weekly_df is not None and not weekly_df.empty:
+                    weekly_levels = calculate_levels(
+                        weekly_df,
+                        current_price=current_price,
+                        lookback_bars=26,
+                        timeframe_label="weekly",
+                    )
+                    all_levels.extend(weekly_levels)
+                    timeframes_analyzed.append("weekly")
+                    lookback_periods["weekly"] = (
+                        f"6 months ({len(weekly_df)} bars)"
+                    )
+
+            # Merge confluence across timeframes
+            if len(timeframes_analyzed) > 1:
+                all_levels = detect_confluence(all_levels)
+
+            sr_summary = summarize_levels(
+                all_levels,
+                current_price,
+                timeframes_analyzed=timeframes_analyzed,
+                lookback_periods=lookback_periods,
+            )
 
             result["technical"] = {
                 "current_price": round(current_price, 2),
                 "gaps": summarize_gaps(gaps),
-                "support_resistance": summarize_levels(levels, current_price),
+                "support_resistance": sr_summary,
                 "supply_demand": summarize_zones(zones, current_price),
             }
             # Sanitize numpy types
             result["technical"] = _sanitize_numpy(result["technical"])
 
             logger.info(
-                f"Technical: {len(gaps)} gaps, {len(levels)} levels, "
-                f"{len(zones)} zones"
+                f"Technical: {len(gaps)} gaps, {len(all_levels)} levels "
+                f"({', '.join(timeframes_analyzed)}), {len(zones)} zones"
             )
         except Exception as e:
             error_msg = f"Technical analysis failed: {e}"

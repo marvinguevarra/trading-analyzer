@@ -95,6 +95,48 @@ def fetch_stock_data(ticker: str, timeframe: str = "1d") -> ParsedData:
     )
 
 
+def fetch_sr_timeframes(ticker: str) -> dict[str, pd.DataFrame]:
+    """Fetch daily and weekly data for multi-timeframe S/R analysis.
+
+    Daily: 3 months lookback (~63 trading days).
+    Weekly: 6 months lookback (~26 weeks).
+
+    Args:
+        ticker: Stock ticker symbol (e.g., "AAPL").
+
+    Returns:
+        {"daily": daily_df, "weekly": weekly_df} — normalized DataFrames
+        with 'time' column. Empty DataFrame for any timeframe that fails.
+    """
+    ticker = ticker.strip().upper()
+    result: dict[str, pd.DataFrame] = {}
+
+    for label, period, interval in [
+        ("daily", "3mo", "1d"),
+        ("weekly", "6mo", "1wk"),
+    ]:
+        try:
+            df = yf.download(
+                ticker, period=period, interval=interval, progress=False
+            )
+            if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+                logger.warning(
+                    f"No {label} data returned for {ticker} "
+                    f"(period={period}, interval={interval})"
+                )
+                result[label] = pd.DataFrame()
+                continue
+            result[label] = _normalize_yfinance_df(df)
+            logger.info(
+                f"Multi-TF fetch {ticker} {label}: {len(result[label])} bars"
+            )
+        except Exception as e:
+            logger.warning(f"Multi-TF fetch failed for {ticker} {label}: {e}")
+            result[label] = pd.DataFrame()
+
+    return result
+
+
 def _normalize_yfinance_df(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize yfinance DataFrame to match CSV parser format.
 

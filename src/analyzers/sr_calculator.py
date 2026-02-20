@@ -10,7 +10,7 @@ Component 3 per PRD.md specification.
 No LLM cost - pure Python/math.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
@@ -36,6 +36,9 @@ class SRLevel:
     last_test_date: Optional[datetime] = None
     zone_low: float = 0.0  # Lower bound of the zone
     zone_high: float = 0.0  # Upper bound of the zone
+    timeframe: str = ""  # e.g. "5min", "15min", "1h", "daily", "weekly"
+    is_confluence: bool = False  # True if level appears on 2+ timeframes
+    confluence_timeframes: list[str] = field(default_factory=list)
 
     @property
     def zone_width(self) -> float:
@@ -90,6 +93,9 @@ class SRLevel:
             "days_since_test": days,
             "label": self.label,
             "zone": [round(self.zone_low, 2), round(self.zone_high, 2)],
+            "timeframe": self.timeframe,
+            "is_confluence": self.is_confluence,
+            "confluence_timeframes": self.confluence_timeframes,
         }
 
 
@@ -100,6 +106,7 @@ def calculate_levels(
     swing_window: int = 5,
     sensitivity: str = "medium",
     round_number_interval: float = 10.0,
+    timeframe_label: str = "",
 ) -> list[SRLevel]:
     """Calculate all support and resistance levels.
 
@@ -110,6 +117,7 @@ def calculate_levels(
         swing_window: Bars on each side for swing point detection.
         sensitivity: "low", "medium", or "high" - affects zone width.
         round_number_interval: Spacing for psychological levels.
+        timeframe_label: Source timeframe tag (e.g. "5min", "daily", "weekly").
 
     Returns:
         List of S/R levels sorted by strength.
@@ -135,14 +143,19 @@ def calculate_levels(
         volume_levels = calculate_volume_nodes(analysis_df, zone_pct=zone_pct)
         all_levels.extend(volume_levels)
 
-    # Method 3: Psychological round numbers
-    round_levels = detect_round_numbers(
-        current_price, interval=round_number_interval, zone_pct=zone_pct
-    )
-    all_levels.extend(round_levels)
+    # Method 3: Psychological round numbers (daily or unspecified only)
+    if timeframe_label in ("daily", ""):
+        round_levels = detect_round_numbers(
+            current_price, interval=round_number_interval, zone_pct=zone_pct
+        )
+        all_levels.extend(round_levels)
 
     # Merge nearby levels
     merged = _merge_nearby_levels(all_levels, current_price, zone_pct)
+
+    # Tag each level with its source timeframe
+    for level in merged:
+        level.timeframe = timeframe_label
 
     # Classify as support or resistance based on current price
     for level in merged:
@@ -168,7 +181,7 @@ def calculate_levels(
     merged.sort(key=lambda x: -x.strength_score)
 
     logger.info(
-        f"Found {len(merged)} S/R levels: "
+        f"Found {len(merged)} S/R levels ({timeframe_label or 'default'}): "
         f"{sum(1 for l in merged if l.level_type == 'support')} support, "
         f"{sum(1 for l in merged if l.level_type == 'resistance')} resistance"
     )
@@ -355,6 +368,102 @@ def _merge_nearby_levels(
     return merged
 
 
+def detect_confluence(
+    all_levels: list[SRLevel], threshold_pct: float = 0.005
+) -> list[SRLevel]:
+    """Merge levels from different timeframes that are within threshold_pct.
+
+    When a daily level at $252.18 and a weekly level at $252.50 are within
+    0.5% of each other, they are merged into a single confluence level with
+    boosted strength.
+
+    Args:
+        all_levels: Combined levels from multiple timeframe runs.
+        threshold_pct: Maximum price distance (as fraction) for merging.
+
+    Returns:
+        Deduplicated list with confluence levels merged.
+    """
+    if not all_levels:
+        return []
+
+    # Sort by price for efficient pairwise comparison
+    sorted_levels = sorted(all_levels, key=lambda x: x.price)
+    merged_indices: set[int] = set()
+    result: list[SRLevel] = []
+
+    for i, level_a in enumerate(sorted_levels):
+        if i in merged_indices:
+            continue
+
+        # Collect all levels within threshold from different timeframes
+        cluster = [level_a]
+        cluster_indices = [i]
+
+        for j in range(i + 1, len(sorted_levels)):
+            if j in merged_indices:
+                continue
+            level_b = sorted_levels[j]
+
+            # Stop scanning once prices diverge beyond threshold
+            if level_a.price > 0:
+                distance = abs(level_b.price - level_a.price) / level_a.price
+            else:
+                break
+            if distance > threshold_pct * 3:
+                break
+
+            # Only merge across different timeframes
+            if (
+                distance <= threshold_pct
+                and level_b.timeframe != level_a.timeframe
+            ):
+                cluster.append(level_b)
+                cluster_indices.append(j)
+
+        if len(cluster) == 1:
+            # No confluence — pass through unchanged
+            result.append(level_a)
+        else:
+            # Merge into a single confluence level
+            merged_indices.update(cluster_indices)
+            avg_price = sum(l.price for l in cluster) / len(cluster)
+            total_touches = sum(l.touches for l in cluster)
+            total_breaks = sum(l.breaks for l in cluster)
+            max_strength = max(l.strength for l in cluster)
+            best = max(cluster, key=lambda l: l.strength_score)
+
+            # Collect unique timeframes
+            timeframes = sorted(set(l.timeframe for l in cluster if l.timeframe))
+
+            # Zone: widest envelope
+            zone_low = min(l.zone_low for l in cluster)
+            zone_high = max(l.zone_high for l in cluster)
+
+            # Most recent test date
+            test_dates = [l.last_test_date for l in cluster if l.last_test_date]
+            last_test = max(test_dates) if test_dates else None
+
+            confluent = SRLevel(
+                price=round(avg_price, 2),
+                level_type=best.level_type,
+                source=best.source,
+                strength=min(10, max_strength + 2),
+                strength_score=best.strength_score,
+                touches=total_touches,
+                breaks=total_breaks,
+                last_test_date=last_test,
+                zone_low=zone_low,
+                zone_high=zone_high,
+                timeframe=" + ".join(timeframes),
+                is_confluence=True,
+                confluence_timeframes=timeframes,
+            )
+            result.append(confluent)
+
+    return result
+
+
 def _count_touches(
     df: pd.DataFrame, zone_low: float, zone_high: float, level_type: str = "support"
 ) -> tuple[int, int, Optional[datetime]]:
@@ -464,8 +573,20 @@ def _calculate_strength_score(level: SRLevel, df: pd.DataFrame) -> int:
     return max(0, min(100, score))
 
 
-def summarize_levels(levels: list[SRLevel], current_price: float) -> dict:
-    """Generate a summary of S/R analysis results."""
+def summarize_levels(
+    levels: list[SRLevel],
+    current_price: float,
+    timeframes_analyzed: list[str] | None = None,
+    lookback_periods: dict[str, str] | None = None,
+) -> dict:
+    """Generate a summary of S/R analysis results.
+
+    Args:
+        levels: All S/R levels (may include confluence-merged levels).
+        current_price: Current price for nearest-level calculations.
+        timeframes_analyzed: List of timeframes used (e.g. ["15min", "daily", "weekly"]).
+        lookback_periods: Human-readable lookback descriptions per timeframe.
+    """
     support = [l for l in levels if l.level_type == "support"]
     resistance = [l for l in levels if l.level_type == "resistance"]
 
@@ -475,6 +596,20 @@ def summarize_levels(levels: list[SRLevel], current_price: float) -> dict:
         resistance, key=lambda l: l.price - current_price
     ) if resistance else None
 
+    # Split into key vs minor levels
+    # Key: confluence OR strength >= 8
+    # Minor: everything else; round-number-only levels stay minor unless confluence
+    key = []
+    minor = []
+    for level in levels:
+        is_key = level.is_confluence or level.strength >= 8
+        if level.source == "round_number" and not level.is_confluence:
+            is_key = False
+        if is_key:
+            key.append(level)
+        else:
+            minor.append(level)
+
     return {
         "current_price": round(current_price, 2),
         "total_levels": len(levels),
@@ -482,12 +617,13 @@ def summarize_levels(levels: list[SRLevel], current_price: float) -> dict:
         "resistance_levels": [l.to_dict() for l in sorted(resistance, key=lambda x: x.price)],
         "nearest_support": nearest_support.to_dict() if nearest_support else None,
         "nearest_resistance": nearest_resistance.to_dict() if nearest_resistance else None,
-        "key_levels": [l.to_dict() for l in levels[:5]],  # Top 5 by strength_score
+        "key_levels": [l.to_dict() for l in key],
+        "minor_levels": [l.to_dict() for l in minor],
+        "timeframes_analyzed": timeframes_analyzed or [],
+        "lookback_periods": lookback_periods or {},
         "explanation": (
-            "Support levels show where price historically found buying pressure. "
-            "Resistance levels show where selling pressure emerged. "
-            "Strong (6+ touches): well-tested level, likely to hold. "
-            "Moderate (3-5 touches): established level, watch for reaction. "
-            "Weak (1-2 touches): untested level, may break easily."
+            "Key levels are confluence zones (confirmed across multiple timeframes) "
+            "or high-strength levels. Minor levels are single-timeframe levels or "
+            "psychological round numbers without structural backing."
         ),
     }

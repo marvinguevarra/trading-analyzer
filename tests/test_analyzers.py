@@ -16,6 +16,7 @@ from src.analyzers.gap_analyzer import (
 from src.analyzers.sr_calculator import (
     SRLevel,
     calculate_levels,
+    detect_confluence,
     detect_round_numbers,
     find_swing_points,
     summarize_levels,
@@ -243,6 +244,159 @@ class TestSRCalculator:
         assert "support_levels" in summary
         assert "resistance_levels" in summary
         assert "total_levels" in summary
+
+
+class TestMultiTimeframeSR:
+    """Tests for multi-timeframe S/R: new fields, confluence, updated summary."""
+
+    def test_srlevel_new_fields_defaults(self):
+        """New fields default correctly and don't break existing construction."""
+        level = SRLevel(price=100.0, level_type="support", source="swing", strength=5)
+        assert level.timeframe == ""
+        assert level.is_confluence is False
+        assert level.confluence_timeframes == []
+
+    def test_srlevel_to_dict_includes_new_fields(self):
+        """to_dict() serializes timeframe and confluence fields."""
+        level = SRLevel(
+            price=250.0,
+            level_type="support",
+            source="swing",
+            strength=8,
+            timeframe="daily",
+            is_confluence=True,
+            confluence_timeframes=["daily", "weekly"],
+        )
+        d = level.to_dict()
+        assert d["timeframe"] == "daily"
+        assert d["is_confluence"] is True
+        assert d["confluence_timeframes"] == ["daily", "weekly"]
+
+    def test_timeframe_label_stamps_levels(self):
+        """calculate_levels() stamps each level with timeframe_label."""
+        df = get_whr_data()
+        levels = calculate_levels(df, timeframe_label="daily")
+        assert len(levels) > 0
+        for level in levels:
+            assert level.timeframe == "daily"
+
+    def test_round_numbers_only_on_daily_or_default(self):
+        """Round numbers should NOT be generated for intraday/weekly timeframes."""
+        df = get_whr_data()
+        intraday_levels = calculate_levels(df, timeframe_label="15min")
+        assert all(l.source != "round_number" for l in intraday_levels)
+
+        weekly_levels = calculate_levels(df, timeframe_label="weekly")
+        assert all(l.source != "round_number" for l in weekly_levels)
+
+        # Default (empty) should still include round numbers
+        default_levels = calculate_levels(df, timeframe_label="")
+        assert any(l.source == "round_number" for l in default_levels)
+
+        # Daily should include round numbers
+        daily_levels = calculate_levels(df, timeframe_label="daily")
+        assert any(l.source == "round_number" for l in daily_levels)
+
+    def test_detect_confluence_merges_across_timeframes(self):
+        """Levels within 0.5% from different timeframes should be merged."""
+        levels = [
+            SRLevel(price=100.0, level_type="support", source="swing",
+                    strength=6, touches=3, timeframe="daily",
+                    zone_low=99.0, zone_high=101.0),
+            SRLevel(price=100.3, level_type="support", source="swing",
+                    strength=7, touches=4, timeframe="weekly",
+                    zone_low=99.3, zone_high=101.3),
+        ]
+        result = detect_confluence(levels)
+        assert len(result) == 1
+        merged = result[0]
+        assert merged.is_confluence is True
+        assert set(merged.confluence_timeframes) == {"daily", "weekly"}
+        assert merged.touches == 7  # combined
+        assert merged.strength <= 10  # capped
+
+    def test_detect_confluence_same_timeframe_not_merged(self):
+        """Levels from the same timeframe should NOT be merged by confluence."""
+        levels = [
+            SRLevel(price=100.0, level_type="support", source="swing",
+                    strength=6, timeframe="daily", zone_low=99.0, zone_high=101.0),
+            SRLevel(price=100.2, level_type="support", source="volume",
+                    strength=5, timeframe="daily", zone_low=99.2, zone_high=101.2),
+        ]
+        result = detect_confluence(levels)
+        assert len(result) == 2
+        assert all(not l.is_confluence for l in result)
+
+    def test_detect_confluence_far_apart_not_merged(self):
+        """Levels more than 0.5% apart should NOT be merged."""
+        levels = [
+            SRLevel(price=100.0, level_type="support", source="swing",
+                    strength=6, timeframe="daily", zone_low=99.0, zone_high=101.0),
+            SRLevel(price=105.0, level_type="resistance", source="swing",
+                    strength=7, timeframe="weekly", zone_low=104.0, zone_high=106.0),
+        ]
+        result = detect_confluence(levels)
+        assert len(result) == 2
+
+    def test_detect_confluence_strength_capped_at_10(self):
+        """Merged confluence level strength should not exceed 10."""
+        levels = [
+            SRLevel(price=100.0, level_type="support", source="swing",
+                    strength=9, timeframe="daily", zone_low=99.0, zone_high=101.0),
+            SRLevel(price=100.1, level_type="support", source="swing",
+                    strength=10, timeframe="weekly", zone_low=99.1, zone_high=101.1),
+        ]
+        result = detect_confluence(levels)
+        assert len(result) == 1
+        assert result[0].strength == 10  # 10 + 2 capped at 10
+
+    def test_detect_confluence_empty_input(self):
+        """Empty input should return empty list."""
+        assert detect_confluence([]) == []
+
+    def test_summarize_levels_has_key_and_minor(self):
+        """Updated summarize_levels should have key_levels and minor_levels."""
+        df = get_whr_data()
+        current_price = float(df["close"].iloc[-1])
+        levels = calculate_levels(df)
+        summary = summarize_levels(
+            levels,
+            current_price,
+            timeframes_analyzed=["1M", "daily"],
+            lookback_periods={"1M": "20 bars", "daily": "63 bars"},
+        )
+        assert "key_levels" in summary
+        assert "minor_levels" in summary
+        assert "timeframes_analyzed" in summary
+        assert summary["timeframes_analyzed"] == ["1M", "daily"]
+        assert "lookback_periods" in summary
+        assert summary["lookback_periods"]["daily"] == "63 bars"
+
+    def test_round_number_in_minor_unless_confluence(self):
+        """Round-number-only levels should be in minor_levels."""
+        levels = [
+            SRLevel(price=250.0, level_type="support", source="round_number",
+                    strength=3, timeframe="daily"),
+            SRLevel(price=248.0, level_type="support", source="swing",
+                    strength=9, timeframe="daily"),
+        ]
+        summary = summarize_levels(levels, 252.0)
+        minor_prices = [l["price"] for l in summary["minor_levels"]]
+        key_prices = [l["price"] for l in summary["key_levels"]]
+        assert 250.0 in minor_prices
+        assert 248.0 in key_prices  # strength >= 8
+
+    def test_confluence_level_in_key_levels(self):
+        """Confluence levels should always appear in key_levels."""
+        levels = [
+            SRLevel(price=250.0, level_type="support", source="swing",
+                    strength=5, is_confluence=True,
+                    confluence_timeframes=["daily", "weekly"],
+                    timeframe="daily + weekly"),
+        ]
+        summary = summarize_levels(levels, 252.0)
+        assert len(summary["key_levels"]) == 1
+        assert summary["key_levels"][0]["is_confluence"] is True
 
 
 # ============================================================

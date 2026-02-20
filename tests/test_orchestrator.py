@@ -86,6 +86,21 @@ def _patch_agents(orchestrator):
         )
 
 
+# Mock fetch_sr_timeframes to avoid real yfinance calls in tests.
+# Returns empty DataFrames so multi-TF logic is exercised but no network needed.
+_MOCK_SR_TF_PATCH = patch(
+    "src.orchestrator.fetch_sr_timeframes",
+    return_value={"daily": MagicMock(empty=True), "weekly": MagicMock(empty=True)},
+)
+
+
+@pytest.fixture(autouse=True)
+def _mock_sr_timeframes():
+    """Auto-mock fetch_sr_timeframes for all orchestrator tests."""
+    with _MOCK_SR_TF_PATCH:
+        yield
+
+
 # ── Tier config ──────────────────────────────────────────────
 
 
@@ -317,6 +332,20 @@ class TestTechnicalAnalysis:
         result = orch.analyze("WHR", WHR_CSV)
 
         assert "support_resistance" in result["technical"]
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"})
+    def test_sr_has_key_and_minor_levels(self):
+        orch = TradingAnalysisOrchestrator(tier="lite")
+        _patch_agents(orch)
+
+        result = orch.analyze("WHR", WHR_CSV)
+
+        sr = result["technical"]["support_resistance"]
+        assert "key_levels" in sr
+        assert "minor_levels" in sr
+        assert "timeframes_analyzed" in sr
+        assert isinstance(sr["timeframes_analyzed"], list)
+        assert "lookback_periods" in sr
 
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"})
     def test_zones_detected(self):
